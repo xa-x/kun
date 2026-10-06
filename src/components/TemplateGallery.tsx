@@ -49,6 +49,12 @@ export function TemplateGallery() {
       const res = await fetch(`/api/templates/${encodeURIComponent(slug)}/clone`, {
         method: "POST",
       });
+      if (res.status === 401) {
+        // Cloning creates a workbook — send signed-out visitors through
+        // sign-in and bring them back to the gallery.
+        router.push("/sign-in?next=%2Ftemplates");
+        return;
+      }
       const j = await readJson<{ graph?: { id: string }; error?: string }>(res);
       if (!res.ok || !j.graph?.id) throw new Error(j.error || "Clone failed");
       router.push(`/w/${j.graph.id}`);

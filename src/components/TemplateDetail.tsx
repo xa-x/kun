@@ -42,6 +42,12 @@ export function TemplateDetail({ slug }: { slug: string }) {
       const res = await fetch(`/api/templates/${encodeURIComponent(slug)}/clone`, {
         method: "POST",
       });
+      if (res.status === 401) {
+        // Cloning creates a workbook — send signed-out visitors through
+        // sign-in and bring them back to this template.
+        router.push(`/sign-in?next=${encodeURIComponent(`/templates/${slug}`)}`);
+        return;
+      }
       const j = await readJson<{ graph?: { id: string }; error?: string }>(res);
       if (!res.ok || !j.graph?.id) throw new Error(j.error || "Clone failed");
       router.push(`/w/${j.graph.id}`);
