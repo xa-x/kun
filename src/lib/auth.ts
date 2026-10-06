@@ -1,21 +1,25 @@
-import { cookies } from "next/headers";
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, isNull, or } from "drizzle-orm";
 import { db } from "@/db";
 import {
   apiKeys,
+  artifacts,
+  graphs,
   memberships,
   organizations,
-  sessions,
+  runNodes,
+  runs,
   users,
 } from "@/db/schema";
-import { hashPassword, hashToken, verifyPassword } from "./crypto";
-import { newId, newToken } from "./ids";
+import { hashToken } from "./crypto";
+import { newId } from "./ids";
+import { isPlatformAdmin } from "./admin";
 import { orgForUser, type TenantError } from "./tenant";
 import type { MembershipRow, OrgRow, UserRow } from "@/db/schema";
+import { createSupabaseServerClient, supabaseConfigured } from "./supabase";
 
-export const SESSION_COOKIE = "fb_session";
-const SESSION_DAYS = 30;
+/** Legacy cookie from the pre-Supabase auth — cleared on logout. */
+export const SESSION_COOKIE = "kun_session";
 
 export interface Actor {
   user: UserRow;
@@ -24,145 +28,93 @@ export interface Actor {
   via: "session" | "api_key" | "local";
 }
 
-function cookieOptions(token: string) {
-  return {
-    name: SESSION_COOKIE,
-    value: token,
-    httpOnly: true,
-    sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: SESSION_DAYS * 24 * 60 * 60,
-  };
+interface AuthUser {
+  id: string;
+  email?: string | null;
+  name?: string | null;
 }
 
-export async function createSession(userId: string) {
-  const token = newToken(24);
-  const id = newId();
-  const expires = new Date(Date.now() + SESSION_DAYS * 86400_000);
-  await db.insert(sessions).values({
-    id,
-    userId,
-    tokenHash: hashToken(token),
-    expiresAt: expires,
-  });
-  return token;
+/** Idempotently mirror a Supabase Auth user into our `users` table. */
+async function ensureUserRow(u: AuthUser): Promise<UserRow> {
+  const [existing] = await db.select().from(users).where(eq(users.id, u.id)).limit(1);
+  if (existing) return existing;
+  const email = (u.email ?? `${u.id}@supabase.local`).trim().toLowerCase();
+  const [row] = await db
+    .insert(users)
+    .values({
+      id: u.id,
+      email,
+      name: (typeof u.name === "string" && u.name.trim()) || email.split("@")[0],
+    })
+    .onConflictDoNothing()
+    .returning();
+  if (row) return row;
+  const [again] = await db.select().from(users).where(eq(users.id, u.id)).limit(1);
+  return again!;
 }
 
-export async function signup(email: string, password: string, name?: string) {
-  const normalized = email.trim().toLowerCase();
-  if (!normalized || !normalized.includes("@") || password.length < 6) {
-    throw Object.assign(new Error("Valid email and 6+ character password required"), {
-      status: 400,
-    });
-  }
-  const [existing] = await db
-    .select()
-    .from(users)
-    .where(eq(users.email, normalized))
+/** Re-point unassigned rows at an org (legacy local-first data). */
+export async function backfillOrphanRows(orgId: string, ownerId: string) {
+  await db
+    .update(graphs)
+    .set({ orgId })
+    .where(or(eq(graphs.orgId, ""), isNull(graphs.orgId)));
+  await db.update(graphs).set({ ownerId }).where(isNull(graphs.ownerId));
+  await db.update(runs).set({ orgId }).where(or(eq(runs.orgId, ""), isNull(runs.orgId)));
+  await db
+    .update(runNodes)
+    .set({ orgId })
+    .where(or(eq(runNodes.orgId, ""), isNull(runNodes.orgId)));
+  await db
+    .update(artifacts)
+    .set({ orgId })
+    .where(or(eq(artifacts.orgId, ""), isNull(artifacts.orgId)));
+}
+
+/**
+ * Give a freshly-signed-in user a workspace. If the SQLite migration carried
+ * over the local-first bootstrap org (its only member is local@kun.dev),
+ * the first real account claims it — workbooks, runs, and artifacts included.
+ */
+async function ensureWorkspace(userId: string) {
+  const existing = await orgForUser(userId);
+  if (existing) return existing;
+
+  const legacy = await db
+    .select({ org: organizations })
+    .from(memberships)
+    .innerJoin(organizations, eq(memberships.orgId, organizations.id))
+    .innerJoin(users, eq(memberships.userId, users.id))
+    .where(eq(users.email, "local@kun.dev"))
     .limit(1);
-  if (existing) {
-    throw Object.assign(new Error("Email already registered"), { status: 409 });
+  if (legacy[0]) {
+    await db
+      .insert(memberships)
+      .values({ id: newId(), orgId: legacy[0].org.id, userId, role: "owner" })
+      .onConflictDoNothing();
+    await backfillOrphanRows(legacy[0].org.id, userId);
+    const claimed = await orgForUser(userId);
+    if (claimed) return claimed;
   }
-  const userId = newId();
+
   const orgId = newId();
-  await db.insert(users).values({
-    id: userId,
-    email: normalized,
-    passwordHash: hashPassword(password),
-    name: name?.trim() || normalized.split("@")[0],
-  });
   await db.insert(organizations).values({
     id: orgId,
     name: "Personal",
     slug: `org-${orgId}`,
     plan: "free",
   });
-  await db.insert(memberships).values({
-    id: newId(),
-    orgId,
-    userId,
-    role: "owner",
-  });
-  return { userId, orgId, token: await createSession(userId) };
+  await db
+    .insert(memberships)
+    .values({ id: newId(), orgId, userId, role: "owner" })
+    .onConflictDoNothing();
+  const fresh = await orgForUser(userId);
+  return fresh!;
 }
 
-export async function login(email: string, password: string) {
-  const [user] = await db
-    .select()
-    .from(users)
-    .where(eq(users.email, email.trim().toLowerCase()))
-    .limit(1);
-  if (!user || !verifyPassword(password, user.passwordHash)) {
-    throw Object.assign(new Error("Invalid email or password"), { status: 401 });
-  }
-  return { user, token: await createSession(user.id) };
-}
-
-export async function bootstrapLocalOwner() {
-  const existing = await db.select().from(users).limit(1);
-  if (existing[0]) {
-    const ctx = await orgForUser(existing[0].id);
-    return { user: existing[0], org: ctx?.org ?? null, membership: ctx?.membership ?? null };
-  }
-  const userId = newId();
-  const orgId = newId();
-  await db.insert(users).values({
-    id: userId,
-    email: "local@flowbook.dev",
-    passwordHash: hashPassword(newToken(16)),
-    name: "Local",
-    theme: "system",
-  });
-  await db.insert(organizations).values({
-    id: orgId,
-    name: "Personal",
-    slug: "personal",
-    plan: "pro",
-  });
-  await db.insert(memberships).values({
-    id: newId(),
-    orgId,
-    userId,
-    role: "owner",
-  });
-  const [user] = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  const [org] = await db
-    .select()
-    .from(organizations)
-    .where(eq(organizations.id, orgId))
-    .limit(1);
-  const [membership] = await db
-    .select()
-    .from(memberships)
-    .where(eq(memberships.userId, userId))
-    .limit(1);
-  return { user: user!, org: org!, membership: membership! };
-}
-
-export async function backfillOrphanRows(orgId: string, ownerId: string) {
-  const sqlite = (await import("@/db")).rawSqlite;
-  sqlite
-    .prepare("UPDATE graphs SET org_id = ?, owner_id = COALESCE(owner_id, ?) WHERE org_id = '' OR org_id IS NULL")
-    .run(orgId, ownerId);
-  sqlite.prepare("UPDATE runs SET org_id = ? WHERE org_id = '' OR org_id IS NULL").run(orgId);
-  sqlite.prepare("UPDATE run_nodes SET org_id = ? WHERE org_id = '' OR org_id IS NULL").run(orgId);
-  sqlite.prepare("UPDATE artifacts SET org_id = ? WHERE org_id = '' OR org_id IS NULL").run(orgId);
-}
-
-async function actorFromToken(token: string): Promise<Actor | null> {
-  const [sess] = await db
-    .select()
-    .from(sessions)
-    .where(
-      and(eq(sessions.tokenHash, hashToken(token)), gt(sessions.expiresAt, new Date())),
-    )
-    .limit(1);
-  if (!sess) return null;
-  const [user] = await db.select().from(users).where(eq(users.id, sess.userId)).limit(1);
-  if (!user) return null;
-  const ctx = await orgForUser(user.id);
-  if (!ctx) return null;
+async function actorFromSupabaseSession(u: AuthUser): Promise<Actor | null> {
+  const user = await ensureUserRow(u);
+  const ctx = await ensureWorkspace(user.id);
   return { user, org: ctx.org, membership: ctx.membership, via: "session" };
 }
 
@@ -194,53 +146,85 @@ async function actorFromApiKey(raw: string): Promise<Actor | null> {
 
 export async function resolveActor(req?: NextRequest): Promise<Actor | null> {
   const header = req?.headers.get("authorization");
-  if (header?.startsWith("Bearer fb_")) {
+  if (header?.startsWith("Bearer kun_")) {
     const viaKey = await actorFromApiKey(header.slice(7));
     if (viaKey) return viaKey;
   }
-  const cookieStore = req
-    ? undefined
-    : await cookies();
-  const token =
-    req?.cookies.get(SESSION_COOKIE)?.value ?? cookieStore?.get(SESSION_COOKIE)?.value;
-  if (token) {
-    const viaSess = await actorFromToken(token);
-    if (viaSess) return viaSess;
-  }
-  return null;
+  if (!supabaseConfigured()) return null;
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+  return actorFromSupabaseSession({
+    id: user.id,
+    email: user.email,
+    name: (user.user_metadata as { name?: string } | null)?.name,
+  });
 }
 
-/** Local-first: if nobody is signed in, provision a personal workspace. */
-export async function ensureActor(req?: NextRequest): Promise<Actor> {
-  const existing = await resolveActor(req);
-  if (existing) {
-    await backfillOrphanRows(existing.org.id, existing.user.id);
-    return existing;
-  }
-  const boot = await bootstrapLocalOwner();
-  if (!boot.org || !boot.membership) {
-    throw Object.assign(new Error("Could not provision workspace"), { status: 500 });
-  }
-  await backfillOrphanRows(boot.org.id, boot.user.id);
-  return { user: boot.user, org: boot.org, membership: boot.membership, via: "local" };
-}
-
+/** Hosted SaaS: every request needs a signed-in user or an API key. */
 export async function requireActor(req?: NextRequest): Promise<Actor> {
-  return ensureActor(req);
-}
-
-export function attachSession(res: NextResponse, token: string) {
-  res.cookies.set(cookieOptions(token));
-  return res;
-}
-
-export async function destroySession(req?: NextRequest) {
-  const cookieStore = req ? undefined : await cookies();
-  const token =
-    req?.cookies.get(SESSION_COOKIE)?.value ?? cookieStore?.get(SESSION_COOKIE)?.value;
-  if (token) {
-    await db.delete(sessions).where(eq(sessions.tokenHash, hashToken(token)));
+  const actor = await resolveActor(req);
+  if (!actor) {
+    throw Object.assign(new Error("Sign in required"), { status: 401 });
   }
+  return actor;
+}
+
+export const ensureActor = requireActor;
+
+export async function signup(email: string, password: string, name?: string) {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized || !normalized.includes("@") || password.length < 6) {
+    throw Object.assign(new Error("Valid email and 6+ character password required"), {
+      status: 400,
+    });
+  }
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.auth.signUp({
+    email: normalized,
+    password,
+    options: { data: { name: name?.trim() || undefined } },
+  });
+  if (error) {
+    throw Object.assign(new Error(error.message), { status: 400 });
+  }
+  if (!data.session) {
+    // Email confirmation is enabled on the project — ask them to confirm.
+    return { needsConfirmation: true as const };
+  }
+  await actorFromSupabaseSession({
+    id: data.user!.id,
+    email: data.user!.email,
+    name: name?.trim() || undefined,
+  });
+  return { needsConfirmation: false as const };
+}
+
+export async function login(email: string, password: string) {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: email.trim().toLowerCase(),
+    password,
+  });
+  if (error || !data.user) {
+    throw Object.assign(new Error(error?.message || "Invalid email or password"), {
+      status: 401,
+    });
+  }
+  const actor = await actorFromSupabaseSession({
+    id: data.user.id,
+    email: data.user.email,
+    name: (data.user.user_metadata as { name?: string } | null)?.name,
+  });
+  return { actor: actor! };
+}
+
+export async function destroySession() {
+  if (!supabaseConfigured()) return;
+  const supabase = await createSupabaseServerClient();
+  await supabase.auth.signOut();
 }
 
 export function publicActor(actor: Actor) {
@@ -248,6 +232,7 @@ export function publicActor(actor: Actor) {
     user: { id: actor.user.id, email: actor.user.email, name: actor.user.name, theme: actor.user.theme },
     org: { id: actor.org.id, name: actor.org.name, plan: actor.org.plan },
     role: actor.membership.role,
+    platformAdmin: isPlatformAdmin(actor.user.email),
   };
 }
 

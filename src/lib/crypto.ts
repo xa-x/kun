@@ -8,9 +8,9 @@ function dataDir() {
   return path.join(process.cwd(), ".data");
 }
 
-/** 32-byte key from FLOWBOOK_SECRET or a generated local file. */
+/** 32-byte key from KUN_SECRET or a generated local file. */
 export function masterKey(): Buffer {
-  const env = process.env.FLOWBOOK_SECRET;
+  const env = process.env.KUN_SECRET;
   if (env && env.length >= 16) {
     return crypto.createHash("sha256").update(env).digest();
   }

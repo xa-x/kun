@@ -9,7 +9,7 @@ const GROUPS: { key: NodeTypeDef["category"]; label: string }[] = [
   { key: "output", label: "Outputs" },
 ];
 
-export const DND_MIME = "application/x-flowbook-node";
+export const DND_MIME = "application/x-kun-node";
 
 export function Palette({
   onAdd,
@@ -24,7 +24,7 @@ export function Palette({
     return (
       <button
         onClick={() => setOpen(true)}
-        className="fb-pop absolute left-3 top-3 z-10 flex items-center gap-1.5 rounded-full border border-line bg-card/90 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-muted shadow-lg shadow-black/40 backdrop-blur transition-colors hover:border-line2 hover:text-ink"
+        className="kun-pop absolute left-3 top-3 z-10 flex items-center gap-1.5 rounded-full border border-line bg-card/90 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-muted shadow-lg shadow-black/40 backdrop-blur transition-colors hover:border-line2 hover:text-ink"
       >
         <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden>
           <path d="M5 1v8M1 5h8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
@@ -41,6 +41,7 @@ export function Palette({
         </span>
         <button
           onClick={() => setOpen(false)}
+          aria-label="Hide nodes panel"
           title="Hide"
           className="flex h-4 w-4 items-center justify-center rounded text-faint transition-colors hover:bg-white/5 hover:text-muted"
         >
@@ -55,7 +56,7 @@ export function Palette({
         if (!items.length) return null;
         return (
           <div key={g.key} className="mb-2 last:mb-0">
-            <div className="px-3 pb-0.5 pt-1 font-mono text-[8.5px] uppercase tracking-[0.18em] text-faint/70">
+            <div className="px-3 pb-0.5 pt-1 font-mono text-[8.5px] uppercase tracking-[0.18em] text-faint">
               {g.label}
             </div>
             {items.map((d) => (
@@ -82,7 +83,7 @@ export function Palette({
           </div>
         );
       })}
-      <p className="mx-2.5 mt-1 border-t border-line px-0.5 pt-2 font-mono text-[8.5px] uppercase tracking-[0.16em] text-faint/80">
+      <p className="mx-2.5 mt-1 border-t border-line px-0.5 pt-2 font-mono text-[8.5px] uppercase tracking-[0.16em] text-faint">
         Or open Chat to build
       </p>
     </aside>

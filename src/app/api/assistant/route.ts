@@ -11,9 +11,8 @@ import {
 } from "@/lib/assistant";
 import { listSkills } from "@/lib/skills";
 import { resolveProvider } from "@/lib/providers";
-import type { GraphDoc, ProviderConfig, RunSettings } from "@/lib/types";
+import type { GraphDoc } from "@/lib/types";
 import { requireActor } from "@/lib/auth";
-import { loadOrgSettings, mergeSettings } from "@/lib/vault";
 import { db } from "@/db";
 import { runNodes, runs } from "@/db/schema";
 
@@ -46,30 +45,7 @@ const incoming = z.object({
       edges: z.array(z.unknown()),
     })
     .optional(),
-  settings: z
-    .object({
-      providers: z.record(z.string(), z.unknown()).optional(),
-    })
-    .optional(),
 });
-
-function settingsFrom(body: z.infer<typeof incoming>): RunSettings | undefined {
-  const providers: Record<string, ProviderConfig> = {};
-  const raw = body.settings?.providers;
-  if (raw && typeof raw === "object") {
-    for (const [id, cfg] of Object.entries(raw)) {
-      if (!cfg || typeof cfg !== "object") continue;
-      const c = cfg as Record<string, unknown>;
-      const entry: ProviderConfig = {};
-      if (typeof c.baseUrl === "string" && c.baseUrl.trim())
-        entry.baseUrl = c.baseUrl.trim();
-      if (typeof c.apiKey === "string" && c.apiKey.trim())
-        entry.apiKey = c.apiKey.trim();
-      providers[id] = entry;
-    }
-  }
-  return Object.keys(providers).length ? { providers } : undefined;
-}
 
 function graphSummary(graph?: { nodes: unknown[]; edges: unknown[] }) {
   const doc = (graph ?? { nodes: [], edges: [] }) as GraphDoc;
@@ -168,8 +144,6 @@ export async function POST(req: NextRequest) {
       headers: { "content-type": "application/json" },
     });
   }
-  const vault = await loadOrgSettings(actor.org.id);
-  const settings = mergeSettings(vault, settingsFrom(body));
   const installedSkills = await listSkills(actor.org.id);
 
   let runContext = "(no recent run)";
@@ -205,13 +179,8 @@ export async function POST(req: NextRequest) {
         }
       };
       try {
-        let p;
-        try {
-          p = resolveProvider("openrouter", settings);
-        } catch {
-          p = resolveProvider("pyok", settings);
-        }
-        const system = `You are Flowbook's canvas assistant. You build and edit node workflows.
+        const p = resolveProvider();
+        const system = `You are Kun's (كُن) canvas assistant. You build and edit node workflows.
 
 Available node kinds:
 ${nodeCatalogPrompt()}

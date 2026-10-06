@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { readJson } from "@/lib/http";
+import { parseSkillMd } from "@/lib/skills/format";
 import { toast } from "./Toast";
 
 export interface SkillChoice {
@@ -27,6 +28,21 @@ function sourceLabel(source?: string) {
   return "skills.sh";
 }
 
+function byName(a: SkillChoice, b: SkillChoice) {
+  return a.displayName.localeCompare(b.displayName);
+}
+
+function saveBlob(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+type Mode = "list" | "create" | "import";
+
 export function SkillPicker({
   value,
   onPick,
@@ -40,23 +56,35 @@ export function SkillPicker({
   draft?: { displayName?: string; body?: string };
 }) {
   const [open, setOpen] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const [mode, setMode] = useState<Mode>("list");
   const [q, setQ] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [body, setBody] = useState("");
+  const [brief, setBrief] = useState("");
+  const [drafting, setDrafting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [refInput, setRefInput] = useState("");
+  const [pulling, setPulling] = useState(false);
+  const [importingFile, setImportingFile] = useState(false);
   const [installed, setInstalled] = useState<SkillChoice[]>([]);
   const [remote, setRemote] = useState<SkillChoice[]>([]);
   const [loading, setLoading] = useState(false);
   const box = useRef<HTMLDivElement>(null);
 
   const startCreate = () => {
-    setCreating(true);
+    setMode("create");
     setOpen(true);
     setName(draft?.displayName && draft.displayName !== "Skill" ? draft.displayName : "");
     setDescription("");
     setBody(draft?.body ?? "");
+    setBrief("");
+  };
+
+  const startImport = () => {
+    setMode("import");
+    setOpen(true);
+    setRefInput("");
   };
 
   useEffect(() => {
@@ -75,11 +103,11 @@ export function SkillPicker({
   }, []);
 
   useEffect(() => {
-    if (!open || q.trim().length < 2) {
-      setRemote([]);
-      return;
-    }
     const t = setTimeout(() => {
+      if (!open || q.trim().length < 2) {
+        setRemote([]);
+        return;
+      }
       setLoading(true);
       fetch(`/api/skills/search?q=${encodeURIComponent(q.trim())}`)
         .then((r) => readJson<{ skills?: SkillChoice[] }>(r))
@@ -125,16 +153,23 @@ export function SkillPicker({
     );
   }, [installed, q]);
 
+  const mergeInstalled = (incoming: SkillChoice[]) => {
+    const slugs = new Set(incoming.map((s) => s.slug));
+    setInstalled((xs) => [...xs.filter((x) => !slugs.has(x.slug)), ...incoming].sort(byName));
+  };
+
   const pickInstalled = async (s: SkillChoice) => {
     try {
       const res = await fetch(`/api/skills?id=${encodeURIComponent(s.id)}`);
       const j = await readJson<{ skill?: SkillChoice }>(res);
       onPick(j.skill ?? s);
       setOpen(false);
+      setMode("list");
       setQ("");
     } catch {
       onPick(s);
       setOpen(false);
+      setMode("list");
     }
   };
 
@@ -156,16 +191,127 @@ export function SkillPicker({
       });
       const j = await readJson<{ skill?: SkillChoice; error?: string }>(res);
       if (!res.ok || !j.skill) throw new Error(j.error || "Install failed");
-      setInstalled((xs) => {
-        const next = xs.filter((x) => x.slug !== j.skill!.slug);
-        return [...next, j.skill!];
-      });
+      mergeInstalled([j.skill]);
       onPick(j.skill);
       setOpen(false);
+      setMode("list");
       setQ("");
       toast(`Installed ${j.skill.displayName}.`, "ok");
     } catch (e) {
       toast(e instanceof Error ? e.message : "Install failed", "error");
+    }
+  };
+
+  const draftWithAI = async () => {
+    if (drafting) return;
+    if (brief.trim().length < 3) {
+      toast("Describe what the skill should do first.", "error");
+      return;
+    }
+    setDrafting(true);
+    try {
+      const res = await fetch("/api/skills/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          brief: brief.trim(),
+          name: name.trim() || undefined,
+        }),
+      });
+      const j = await readJson<{ markdown?: string; error?: string }>(res);
+      if (!res.ok || !j.markdown) throw new Error(j.error || "Draft failed");
+      const parsed = parseSkillMd(j.markdown);
+      setName(parsed.displayName || parsed.name || name);
+      setDescription(parsed.description || description);
+      setBody(parsed.body || parsed.description || "");
+      toast("Draft ready — review, tweak, then save.", "ok");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Draft failed", "error");
+    } finally {
+      setDrafting(false);
+    }
+  };
+
+  const pullRef = async () => {
+    const ref = refInput.trim();
+    if (!ref || pulling) return;
+    setPulling(true);
+    try {
+      const res = await fetch("/api/skills/install", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ref }),
+      });
+      const j = await readJson<{
+        skill?: SkillChoice;
+        skills?: SkillChoice[];
+        error?: string;
+      }>(res);
+      if (!res.ok || !j.skills?.length) {
+        throw new Error(j.error || "Pull failed");
+      }
+      mergeInstalled(j.skills);
+      if (j.skills.length === 1) {
+        onPick(j.skill ?? j.skills[0]);
+        setOpen(false);
+        setMode("list");
+        toast(`Installed ${j.skills[0].displayName}.`, "ok");
+      } else {
+        setMode("list");
+        toast(`Pulled ${j.skills.length} skills from that repo.`, "ok");
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Pull failed", "error");
+    } finally {
+      setPulling(false);
+    }
+  };
+
+  const importFile = async (file: File) => {
+    if (importingFile) return;
+    setImportingFile(true);
+    try {
+      const text = await file.text();
+      const payload = file.name.toLowerCase().endsWith(".json")
+        ? { bundle: JSON.parse(text) }
+        : { markdown: text };
+      const res = await fetch("/api/skills/import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const j = await readJson<{ skills?: SkillChoice[]; error?: string }>(res);
+      if (!res.ok || !j.skills?.length) {
+        throw new Error(j.error || "Nothing imported — is that a SKILL.md or a skills bundle?");
+      }
+      mergeInstalled(j.skills);
+      setOpen(false);
+      setMode("list");
+      toast(`Imported ${j.skills.length} skill${j.skills.length === 1 ? "" : "s"}.`, "ok");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Import failed", "error");
+    } finally {
+      setImportingFile(false);
+    }
+  };
+
+  const downloadSkill = async (s: SkillChoice) => {
+    try {
+      const res = await fetch(`/api/skills/export?id=${encodeURIComponent(s.id)}`);
+      if (!res.ok) throw new Error("Export failed");
+      saveBlob(`${s.slug}-SKILL.md`, await res.blob());
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Export failed", "error");
+    }
+  };
+
+  const exportLibrary = async () => {
+    try {
+      const res = await fetch("/api/skills/export");
+      if (!res.ok) throw new Error("Export failed");
+      saveBlob("kun-skills.json", await res.blob());
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Export failed", "error");
     }
   };
 
@@ -189,12 +335,9 @@ export function SkillPicker({
       });
       const j = await readJson<{ skill?: SkillChoice; error?: string }>(res);
       if (!res.ok || !j.skill) throw new Error(j.error || "Save failed");
-      setInstalled((xs) => {
-        const next = xs.filter((x) => x.slug !== j.skill!.slug);
-        return [...next, j.skill!];
-      });
+      mergeInstalled([j.skill]);
       onPick(j.skill);
-      setCreating(false);
+      setMode("list");
       setOpen(false);
       setQ("");
       toast(`Saved “${j.skill.displayName}”. Pick it on any node.`, "ok");
@@ -209,6 +352,8 @@ export function SkillPicker({
     <div ref={box} className="relative mb-2">
       <button
         type="button"
+        aria-expanded={open}
+        aria-haspopup="listbox"
         onClick={() => setOpen((v) => !v)}
         className="nodrag flex w-full items-center justify-between gap-2 rounded-md border border-line bg-sunken px-2 py-1.5 text-left text-[11px] text-muted outline-none transition-colors hover:border-line2 focus:border-line2"
       >
@@ -219,60 +364,80 @@ export function SkillPicker({
               ? "Skill · none"
               : "Pick a skill…"}
         </span>
-        <span className="flex items-center gap-1">
-          {selected && (
-            <span
-              role="button"
-              tabIndex={0}
-              onClick={(e) => {
-                e.stopPropagation();
-                onPick(null);
-              }}
-              className="rounded px-1 text-[10px] text-faint hover:bg-white/5 hover:text-ink"
-            >
-              ×
-            </span>
-          )}
-          <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden>
-            <path
-              d="M1 2.5 4 5.5 7 2.5"
-              stroke="currentColor"
-              strokeWidth="1.3"
-              fill="none"
-              strokeLinecap="round"
-            />
-          </svg>
-        </span>
+        <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden>
+          <path
+            d="M1 2.5 4 5.5 7 2.5"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            fill="none"
+            strokeLinecap="round"
+          />
+        </svg>
       </button>
-      {open && creating && (
-        <div className="fb-pop nodrag nowheel absolute left-0 right-0 z-40 mt-1 rounded-lg border border-line2 bg-card p-2 shadow-xl">
+      {selected && (
+        <button
+          type="button"
+          aria-label="Clear selected skill"
+          onClick={() => onPick(null)}
+          className="nodrag absolute right-6 top-1/2 z-10 -translate-y-1/2 rounded px-1 text-[10px] leading-none text-faint transition-colors hover:bg-white/5 hover:text-ink"
+        >
+          ×
+        </button>
+      )}
+      {open && mode === "create" && (
+        <div className="kun-pop nodrag nowheel absolute left-0 right-0 z-40 mt-1 rounded-lg border border-line2 bg-card p-2 shadow-xl">
           <p className="mb-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-faint">
             New skill
           </p>
+          <textarea
+            value={brief}
+            onChange={(e) => setBrief(e.target.value)}
+            rows={2}
+            aria-label="What the skill should do"
+            placeholder="Describe what the skill should do — the AI drafts it…"
+            className="nowheel mb-1 w-full resize-y rounded-md border border-line bg-sunken px-2 py-1 text-[11px] leading-relaxed text-ink outline-none placeholder:text-faint"
+          />
+          <div className="mb-2 flex items-center justify-between gap-1.5">
+            <button
+              type="button"
+              onClick={() => void draftWithAI()}
+              disabled={drafting}
+              className="rounded-md bg-accent px-2 py-1 text-[10px] font-medium text-canvas disabled:opacity-50"
+            >
+              {drafting ? "Drafting…" : "✦ Draft with AI"}
+            </button>
+            <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-faint">
+              or write it by hand
+            </span>
+          </div>
           <input
-            autoFocus
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Name — cinematic product"
+            autoComplete="off"
+            aria-label="Skill name"
+            placeholder="Name — e.g. cinematic product…"
             className="mb-1 w-full rounded-md border border-line bg-sunken px-2 py-1 text-[11px] text-ink outline-none placeholder:text-faint"
           />
           <input
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="When to use this skill"
+            autoComplete="off"
+            aria-label="Skill description"
+            placeholder="When to use this skill…"
             className="mb-1 w-full rounded-md border border-line bg-sunken px-2 py-1 text-[11px] text-ink outline-none placeholder:text-faint"
           />
           <textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={5}
+            aria-label="Skill instructions"
             placeholder="Instructions the model should follow…"
             className="nowheel mb-2 w-full resize-y rounded-md border border-line bg-sunken px-2 py-1 text-[11px] leading-relaxed text-ink outline-none placeholder:text-faint"
           />
           <div className="flex justify-end gap-1.5">
             <button
               type="button"
-              onClick={() => setCreating(false)}
+              onClick={() => setMode("list")}
               className="rounded px-2 py-1 text-[10px] text-faint hover:text-ink"
             >
               Back
@@ -288,28 +453,101 @@ export function SkillPicker({
           </div>
         </div>
       )}
-      {open && !creating && (
-        <div className="fb-pop nodrag nowheel absolute left-0 right-0 z-40 mt-1 max-h-64 overflow-auto rounded-lg border border-line2 bg-card shadow-xl">
+      {open && mode === "import" && (
+        <div className="kun-pop nodrag nowheel absolute left-0 right-0 z-40 mt-1 rounded-lg border border-line2 bg-card p-2 shadow-xl">
+          <p className="mb-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-faint">
+            Import skills
+          </p>
+          <div className="flex gap-1.5">
+            <input
+              autoFocus
+              value={refInput}
+              onChange={(e) => setRefInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void pullRef();
+              }}
+              autoComplete="off"
+              spellCheck={false}
+              aria-label="GitHub repo or skills folder URL"
+              placeholder="github.com/owner/repo or a skills folder URL…"
+              className="min-w-0 flex-1 rounded-md border border-line bg-sunken px-2 py-1 text-[11px] text-ink outline-none placeholder:text-faint"
+            />
+            <button
+              type="button"
+              onClick={() => void pullRef()}
+              disabled={pulling || !refInput.trim()}
+              className="shrink-0 rounded-md bg-accent px-2 py-1 text-[10px] font-medium text-canvas disabled:opacity-50"
+            >
+              {pulling ? "Pulling…" : "Pull"}
+            </button>
+          </div>
+          <p className="mt-1 mb-2 text-[10px] leading-relaxed text-faint">
+            Pulls SKILL.md files from any public GitHub repo — the repo root, a
+            folder, or a raw SKILL.md URL.
+          </p>
+          <label className="mb-2 flex cursor-pointer items-center justify-center rounded-md border border-line px-2 py-1.5 text-[10px] font-medium text-muted transition-colors hover:border-line2 hover:text-ink">
+            {importingFile ? "Importing…" : "Upload SKILL.md or skills bundle (.json)"}
+            <input
+              type="file"
+              accept=".md,.markdown,.json"
+              className="hidden"
+              disabled={importingFile}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void importFile(f);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setMode("list")}
+              className="rounded px-2 py-1 text-[10px] text-faint hover:text-ink"
+            >
+              Back
+            </button>
+          </div>
+        </div>
+      )}
+      {open && mode === "list" && (
+        <div className="kun-pop nodrag nowheel absolute left-0 right-0 z-40 mt-1 max-h-64 overflow-auto rounded-lg border border-line2 bg-card shadow-xl">
           <input
             autoFocus
             value={q}
             onChange={(e) => setQ(e.target.value)}
+            autoComplete="off"
+            aria-label="Search skills"
             placeholder="Search installed or skills.sh…"
             className="sticky top-0 w-full border-b border-line bg-sunken px-2 py-1.5 text-[11px] text-ink outline-none placeholder:text-faint"
           />
+          {localHits.length === 0 && q.trim().length < 2 && (
+            <p className="px-2 py-1.5 text-[10px] text-faint">
+              No skills yet — create one or import below.
+            </p>
+          )}
           {localHits.length > 0 && (
             <ul className="py-1">
               {localHits.map((s) => (
-                <li key={s.id}>
+                <li key={s.id} className="flex items-center hover:bg-white/[0.04]">
                   <button
                     type="button"
                     onClick={() => void pickInstalled(s)}
-                    className="flex w-full flex-col items-start px-2 py-1.5 text-left hover:bg-white/[0.04]"
+                    className="flex min-w-0 flex-1 flex-col items-start px-2 py-1.5 text-left"
                   >
                     <span className="text-[11px] text-ink/90">{s.displayName}</span>
                     <span className="line-clamp-2 text-[10px] text-faint">
                       {sourceLabel(s.source)} · {s.description || s.slug}
                     </span>
+                  </button>
+                  <button
+                    type="button"
+                    title="Download SKILL.md"
+                    aria-label={`Download ${s.displayName} SKILL.md`}
+                    onClick={() => void downloadSkill(s)}
+                    className="nodrag shrink-0 rounded px-1.5 py-1.5 text-[10px] text-faint transition-colors hover:text-ink"
+                  >
+                    ⤓
                   </button>
                 </li>
               ))}
@@ -341,13 +579,30 @@ export function SkillPicker({
               )}
             </div>
           )}
-          <button
-            type="button"
-            onClick={startCreate}
-            className="sticky bottom-0 w-full border-t border-line bg-card px-2 py-1.5 text-left text-[11px] text-ink/90 hover:bg-white/[0.04]"
-          >
-            + New skill
-          </button>
+          <div className="sticky bottom-0 flex items-stretch border-t border-line bg-card text-[11px] text-ink/90">
+            <button
+              type="button"
+              onClick={startCreate}
+              className="flex-1 px-2 py-1.5 text-left hover:bg-white/[0.04]"
+            >
+              + New skill
+            </button>
+            <button
+              type="button"
+              onClick={startImport}
+              className="border-l border-line px-2 py-1.5 hover:bg-white/[0.04]"
+            >
+              Import
+            </button>
+            <button
+              type="button"
+              onClick={() => void exportLibrary()}
+              title="Download the whole library as a bundle"
+              className="border-l border-line px-2 py-1.5 hover:bg-white/[0.04]"
+            >
+              Export all
+            </button>
+          </div>
         </div>
       )}
     </div>

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ToastHost } from "@/components/Toast";
 import { ThemeProvider } from "@/components/ThemeProvider";
@@ -15,9 +15,13 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Flowbook",
+  title: "كُن · Kun",
   description:
-    "Node-based AI workbook — combine text, image, audio and video nodes into pipelines.",
+    "كُن (Kun — “Be!”) — node-based AI workbook: combine text, image, audio and video nodes into pipelines on an infinite canvas.",
+};
+
+export const viewport: Viewport = {
+  themeColor: "#090909",
 };
 
 export default function RootLayout({

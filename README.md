@@ -1,8 +1,9 @@
-# Flowbook
+# كُن · Kun
 
-Node-based AI workbook — combine text, image, audio and video nodes into
-pipelines on an infinite canvas, run them against any provider, and watch
-results stream in live.
+**كُن** — Arabic for *"Be!"* — the original generation command: speak it and
+it is. A node-based AI workbook: combine text, image, audio and video nodes
+into pipelines on an infinite canvas, run them against any provider, and
+watch results stream in live.
 
 ## Stack
 
@@ -63,7 +64,7 @@ validated against them. Output nodes classify model output automatically
 ## Skills
 
 A skill is a `SKILL.md` file — YAML frontmatter plus instructions — the same
-format as [skills.sh](https://www.skills.sh). Flowbook ships a small bundled
+format as [skills.sh](https://www.skills.sh). Kun ships a small bundled
 set, and you can search/install more from the registry.
 
 - **Skill node** — pick a skill, edit its text, wire it into an AI node's
@@ -89,13 +90,20 @@ cp .env.local.example .env.local   # add OPENROUTER_API_KEY
 npm run dev                        # http://localhost:3000
 ```
 
-Database schema lives in `src/db/schema.ts` (SQLite at `.data/flowbook.db`).
-Tables are created automatically on first request. To sync after a schema
-edit you can still run:
+Database schema lives in `src/db/schema.ts` (Supabase Postgres). Schema
+migrations are in `supabase/migrations/`; one-off data migration scripts in
+`scripts/`. Tables are created by `npm run db:push` (or the Supabase MCP) —
+there is no auto-create on boot. To iterate on the schema:
 
 ```bash
 npx drizzle-kit push
 ```
+
+> **Note on the rename:** the app is كُن / Kun everywhere — UI, prompts,
+> export bundle kinds (`kun/workbook`, `kun/skills`), storage/event/API-key
+> prefixes (`kun.*`, `kun:*`, `Bearer kun_`), the `KUN_SECRET` env var, the
+> `x-kun-signature` webhook header, and the local database file
+> (`.data/kun.db`). The only Flowbook strings left live in git history.
 
 ## API
 

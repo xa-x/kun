@@ -2,9 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   filterModels,
   groupModels,
+  liveList,
+  mergeRefresh,
   modelName,
+  pickDefaultModel,
   providerOf,
   splitModelLabel,
+  type ModelCatalogCore,
   type ModelInfo,
 } from "./models";
 
@@ -133,5 +137,71 @@ describe("filterModels", () => {
     const models = [model("bfl/flux.2-klein", "FLUX.2 Klein")];
     expect(filterModels(models, "image")).toHaveLength(1);
     expect(filterModels(models, "chat")).toHaveLength(0);
+  });
+});
+
+describe("mergeRefresh", () => {
+  const prev: ModelCatalogCore = {
+    models: { openrouter: [model("a/b", "B")] },
+    updatedAt: 100,
+  };
+
+  it("keeps the previous list for a provider that failed to fetch", () => {
+    const next = mergeRefresh(prev, {
+      models: { openrouter: [] },
+      updatedAt: 200,
+      errors: { openrouter: "HTTP 429" },
+    });
+    expect(next.models.openrouter).toHaveLength(1);
+    expect(next.errors?.openrouter).toBe("HTTP 429");
+  });
+
+  it("lets a successful fetch overwrite with an empty list", () => {
+    const next = mergeRefresh(prev, {
+      models: { openrouter: [] },
+      updatedAt: 200,
+    });
+    expect(next.models.openrouter).toHaveLength(0);
+    expect(next.errors).toBeUndefined();
+  });
+
+  it("ignores a response older than what is already stored", () => {
+    expect(mergeRefresh(prev, { models: {}, updatedAt: 50 })).toBe(prev);
+  });
+});
+
+describe("liveList", () => {
+  it("is null when the provider failed or lists nothing", () => {
+    expect(
+      liveList({ openrouter: [model("a/b", "B")] }, { openrouter: "HTTP 500" }),
+    ).toBeNull();
+    expect(liveList({ openrouter: [] }, undefined)).toBeNull();
+  });
+
+  it("is the list when the last fetch succeeded", () => {
+    expect(
+      liveList({ openrouter: [model("a/b", "B")] }, undefined),
+    ).toHaveLength(1);
+  });
+});
+
+describe("pickDefaultModel", () => {
+  it("prefers the first suggestion the provider still lists", () => {
+    expect(
+      pickDefaultModel([{ id: "a/old" }, { id: "a/new" }], [
+        model("a/new", "New"),
+      ]),
+    ).toBe("a/new");
+  });
+
+  it("falls back to a live model when every suggestion is retired", () => {
+    expect(pickDefaultModel([{ id: "a/old" }], [model("x/y", "Y")])).toBe(
+      "x/y",
+    );
+  });
+
+  it("trusts the suggestions when no live list exists", () => {
+    expect(pickDefaultModel([{ id: "a/old" }], null)).toBe("a/old");
+    expect(pickDefaultModel([], null)).toBe("");
   });
 });

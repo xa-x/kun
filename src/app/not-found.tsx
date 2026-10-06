@@ -10,7 +10,7 @@ export default function NotFound() {
       action={
         <Link
           href="/"
-          className="fb-btn-primary rounded-full px-4 py-2 text-[13px] font-medium"
+          className="kun-btn-primary rounded-full px-4 py-2 text-[13px] font-medium"
         >
           Back to workbooks
         </Link>

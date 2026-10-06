@@ -1,6 +1,6 @@
 export function Wordmark({ compact = false }: { compact?: boolean }) {
   return (
-    <span className="flex items-center gap-2" title="Flowbook">
+    <span className="flex items-center gap-2" title="كُن — Kun">
       <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden>
         <circle cx="3.5" cy="8" r="2.2" fill="#3b82f6" />
         <circle cx="12.5" cy="3.5" r="2.2" fill="#22c55e" />
@@ -12,8 +12,17 @@ export function Wordmark({ compact = false }: { compact?: boolean }) {
         />
       </svg>
       {!compact && (
-        <span className="text-[13px] font-semibold tracking-wide text-ink">
-          Flowbook
+        <span className="flex items-baseline gap-1.5">
+          <span
+            lang="ar"
+            dir="rtl"
+            className="text-[15px] font-bold leading-none text-ink"
+          >
+            كُن
+          </span>
+          <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-faint">
+            Kun
+          </span>
         </span>
       )}
     </span>

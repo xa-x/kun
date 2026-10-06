@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "MCP is available on Pro and Team." }, { status: 402 });
     }
     return NextResponse.json({
-      name: "flowbook",
+      name: "kun",
       version: "0.1.0",
       tools: MCP_TOOLS,
     });

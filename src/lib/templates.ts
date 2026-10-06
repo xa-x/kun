@@ -45,7 +45,7 @@ export function publicTemplate(row: {
   description: string;
   tags: unknown;
   cloneCount: number;
-  featured: number;
+  featured: boolean | number;
   publishedBy?: string | null;
   createdAt: Date | number;
   updatedAt?: Date | number;
@@ -61,7 +61,7 @@ export function publicTemplate(row: {
     description: row.description,
     tags,
     cloneCount: row.cloneCount,
-    featured: row.featured === 1,
+    featured: Boolean(row.featured),
     createdAt:
       row.createdAt instanceof Date ? row.createdAt.toISOString() : row.createdAt,
   };

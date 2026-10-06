@@ -60,7 +60,7 @@ export async function POST(
         graphId: id,
         cronExpr,
         timezone: typeof body.timezone === "string" ? body.timezone : "UTC",
-        enabled: body.enabled === false ? 0 : 1,
+        enabled: body.enabled !== false,
         inputs: body.inputs ?? null,
         nextRunAt,
       })

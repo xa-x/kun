@@ -10,8 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import type { ModelInfo } from "./models";
-import type { RunSettings } from "./types";
-import { PROVIDER_SPECS } from "./providers";
+import { mergeRefresh } from "./models";
 import { readJson } from "./http";
 
 /**
@@ -23,10 +22,14 @@ import { readJson } from "./http";
 export interface ModelCatalog {
   models: Record<string, ModelInfo[]>;
   updatedAt: number;
+  /** Providers whose last fetch failed — their lists may be stale. */
+  errors?: Record<string, string>;
 }
 
 const EMPTY: ModelCatalog = { models: {}, updatedAt: 0 };
-const CACHE_KEY = "flowbook.catalog.v6";
+const CACHE_KEY = "kun.catalog.v6";
+/** Re-fetch when the tab regains focus, at most this often. */
+const FOCUS_REFETCH_MS = 15 * 60_000;
 
 function readCache(): ModelCatalog | null {
   try {
@@ -52,7 +55,6 @@ function writeCache(c: ModelCatalog) {
 const Ctx = createContext<ModelCatalog>(EMPTY);
 
 export function useModelCatalog(
-  settings: RunSettings,
   env: Record<string, boolean>,
 ): { catalog: ModelCatalog; reload: () => void } {
   const [catalog, setCatalog] = useState<ModelCatalog>(() => {
@@ -60,38 +62,41 @@ export function useModelCatalog(
     return readCache() ?? EMPTY;
   });
 
-  // signature: every provider's baseUrl+apiKey + env flags
-  const sig =
-    PROVIDER_SPECS.map(
-      (s) =>
-        `${s.id}:${settings.providers[s.id]?.baseUrl ?? ""}|${settings.providers[s.id]?.apiKey ?? ""}|${env[s.id] ? 1 : 0}`,
-    ).join("~");
+  // signature: env flag flips (e.g. operator adds the key) trigger a refetch
+  const sig = env.openrouter ? "openrouter:1" : "openrouter:0";
   const lastSig = useRef<string>("");
 
-  // Concurrent refreshes are allowed; writes are guarded by updatedAt so a
-  // slow stale response can never clobber fresher data.
+  // Concurrent refreshes are allowed; a slower response can never clobber a
+  // fresher one (mergeRefresh checks updatedAt) or a provider it failed to
+  // reach — its last good list is kept instead.
   const reload = useCallback(() => {
-    fetch("/api/models", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ settings }),
-    })
-      .then((r) => readJson<{ models?: Record<string, ModelInfo[]> }>(r))
+    fetch("/api/models", { method: "POST" })
+      .then((r) =>
+        readJson<{
+          models?: Record<string, ModelInfo[]>;
+          errors?: Record<string, string>;
+        }>(r),
+      )
       .then((data) => {
-        const next: ModelCatalog = {
+        const incoming: ModelCatalog = {
           models:
             data?.models && typeof data.models === "object" ? data.models : {},
           updatedAt: Date.now(),
+          errors:
+            data?.errors && typeof data.errors === "object"
+              ? (data.errors as Record<string, string>)
+              : undefined,
         };
-        setCatalog((prev) =>
-          next.updatedAt >= prev.updatedAt || prev.updatedAt === 0 ? next : prev,
-        );
-        try {
-          const cur = readCache();
-          if (!cur || next.updatedAt >= cur.updatedAt) writeCache(next);
-        } catch {
-          /* ignore */
-        }
+        setCatalog((prev) => {
+          const next = mergeRefresh(prev, incoming);
+          try {
+            const cur = readCache();
+            if (!cur || next.updatedAt >= cur.updatedAt) writeCache(next);
+          } catch {
+            /* ignore */
+          }
+          return next;
+        });
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -103,6 +108,27 @@ export function useModelCatalog(
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sig]);
+
+  // The signature effect only fires on mount and settings changes; without
+  // this, a tab left open would keep offering retired models forever.
+  // `reload` changes identity only with the settings signature, so the
+  // listeners re-subscribe about as often as the catalog re-fetches anyway.
+  useEffect(() => {
+    let lastFocus = 0;
+    const onFocus = () => {
+      if (document.visibilityState === "hidden") return;
+      const now = Date.now();
+      if (now - lastFocus < FOCUS_REFETCH_MS) return;
+      lastFocus = now;
+      reload();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [reload]);
 
   return { catalog, reload };
 }

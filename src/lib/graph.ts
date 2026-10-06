@@ -22,6 +22,28 @@ export function downstreamIds(
   return [...out];
 }
 
+/**
+ * Input-less source nodes (Text, Instruction, Skill, uploads) wired directly
+ * into `scope`. A from/only run reads upstream through cached outputs, but a
+ * source node's output is its current content — free to produce and never
+ * safe to cache — so the engine pulls these into scope and runs them fresh.
+ */
+export function freshSourceIds(
+  nodes: { id: string; data: { kind: string } }[],
+  edges: { source: string; target: string }[],
+  scope: Set<string>,
+): Set<string> {
+  const isSource = new Map(
+    nodes.map((n) => [n.id, !(nodeDef(n.data.kind)?.inputs.length ?? 0)]),
+  );
+  const out = new Set<string>();
+  for (const e of edges) {
+    if (scope.has(e.target) && !scope.has(e.source) && isSource.get(e.source))
+      out.add(e.source);
+  }
+  return out;
+}
+
 type Wire = {
   source: string;
   sourceHandle?: string | null;

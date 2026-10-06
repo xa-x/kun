@@ -1,7 +1,7 @@
 import { matchPorts, nodeDef } from "./nodes";
 import type { GraphDoc } from "./types";
 
-export const PORTABLE_KIND = "flowbook/workbook";
+export const PORTABLE_KIND = "kun/workbook";
 export const PORTABLE_VERSION = 2;
 
 export interface PortableSkill {

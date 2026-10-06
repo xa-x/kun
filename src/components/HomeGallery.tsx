@@ -130,8 +130,8 @@ export function HomeGallery() {
   };
 
   return (
-    <div className="fb-atmosphere relative flex min-h-dvh flex-col">
-      <div className="fb-grain" aria-hidden />
+    <div className="kun-atmosphere relative flex min-h-dvh flex-col">
+      <div className="kun-grain" aria-hidden />
       <AppHeader
         active="home"
         onSettings={() => settings.setShowSettings(true)}
@@ -181,7 +181,7 @@ export function HomeGallery() {
             <button
               onClick={() => create("blank")}
               disabled={!!creating}
-              className="fb-btn-primary rounded-full px-4 py-2 text-[13px] font-medium transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+              className="kun-btn-primary rounded-full px-4 py-2 text-[13px] font-medium transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
             >
               {creating === "blank" ? "Creating…" : "New workbook"}
             </button>
@@ -222,7 +222,7 @@ export function HomeGallery() {
               <button
                 onClick={() => create("blank")}
                 disabled={!!creating}
-                className="fb-btn-primary rounded-full px-4 py-2 text-[13px] font-medium transition-all hover:brightness-110 disabled:opacity-50"
+                className="kun-btn-primary rounded-full px-4 py-2 text-[13px] font-medium transition-all hover:brightness-110 disabled:opacity-50"
               >
                 {creating === "blank" ? "Creating…" : "New workbook"}
               </button>
@@ -248,10 +248,8 @@ export function HomeGallery() {
 
       {(settings.showSettings || settings.needsOnboard) && (
         <SettingsModal
-          settings={settings.settings}
           env={settings.env}
           onboarding={settings.needsOnboard && !settings.showSettings}
-          onSave={settings.persist}
           onClose={settings.dismissOnboard}
         />
       )}

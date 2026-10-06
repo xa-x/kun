@@ -169,7 +169,7 @@ export async function callMcpTool(
       if (!run || run.orgId !== orgId) throw new Error("Run not found");
       await db
         .update(runs)
-        .set({ cancelRequested: 1, status: run.status === "queued" ? "cancelled" : run.status })
+        .set({ cancelRequested: true, status: run.status === "queued" ? "cancelled" : run.status })
         .where(eq(runs.id, runId));
       return { ok: true };
     }

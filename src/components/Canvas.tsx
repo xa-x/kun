@@ -37,6 +37,12 @@ import type {
   RunEvent,
 } from "@/lib/types";
 import { ModelCatalogProvider, useModelCatalog } from "@/lib/model-catalog";
+import { kindForNode } from "@/lib/models";
+import {
+  pickRecentDefault,
+  recentsFor,
+  recordRecent,
+} from "@/lib/recent-models";
 import { starterGraph } from "@/lib/starter";
 import { downstreamIds } from "@/lib/graph";
 import { layoutGraph } from "@/lib/layout";
@@ -65,11 +71,15 @@ const nodeTypes = { flow: FlowNode };
 export function Canvas({
   graphId,
   startAssistant = false,
+  startRuns = false,
+  startMini = false,
   shareToken,
   readOnly = false,
 }: {
   graphId: string;
   startAssistant?: boolean;
+  startRuns?: boolean;
+  startMini?: boolean;
   shareToken?: string;
   readOnly?: boolean;
 }) {
@@ -80,8 +90,8 @@ export function Canvas({
   const [running, setRunning] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
-  const [showMini, setShowMini] = useState(false);
-  const [showRuns, setShowRuns] = useState(false);
+  const [showMini, setShowMini] = useState(startMini);
+  const [showRuns, setShowRuns] = useState(startRuns);
   const [showAssistant, setShowAssistant] = useState(startAssistant);
   const [showPublish, setShowPublish] = useState(false);
   const [books, setBooks] = useState<
@@ -98,7 +108,7 @@ export function Canvas({
   const [consoleCollapsed, setConsoleCollapsed] = useState(false);
   useEffect(() => {
     try {
-      if (sessionStorage.getItem("flowbook.console.collapsed") === "1")
+      if (sessionStorage.getItem("kun.console.collapsed") === "1")
         setConsoleCollapsed(true);
     } catch {
       /* ignore */
@@ -107,16 +117,41 @@ export function Canvas({
   useEffect(() => {
     try {
       sessionStorage.setItem(
-        "flowbook.console.collapsed",
+        "kun.console.collapsed",
         consoleCollapsed ? "1" : "0",
       );
     } catch {
       /* ignore */
     }
   }, [consoleCollapsed]);
+  // Panel toggles sync back to the URL so a refresh (or a shared link)
+  // restores them; initial state arrives via server-rendered searchParams.
+  const syncPanelFlag = useCallback((key: string, on: boolean) => {
+    const url = new URL(window.location.href);
+    if (on) url.searchParams.set(key, "1");
+    else url.searchParams.delete(key);
+    window.history.replaceState(null, "", url);
+  }, []);
   const { catalog, reload: reloadCatalog } = useModelCatalog(
-    settingsApi.settings,
     settingsApi.env,
+  );
+  // New nodes start on the most recently used model that its provider still
+  // lists — then the curated picks, then any live model — so a retired
+  // default can't 404 the first run. Recents are read from localStorage at
+  // call time, so picks and runs from this session count immediately.
+  const defaultModelFor = useCallback(
+    (kind: string): { model: string; provider?: string } => {
+      const need = kindForNode(kind);
+      if (!need) return { model: "" };
+      return pickRecentDefault(
+        recentsFor(kind),
+        nodeDef(kind)?.models ?? [],
+        catalog.models,
+        catalog.errors,
+        need,
+      );
+    },
+    [catalog],
   );
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const outputsRef = useRef<Record<string, NodeOutput[]>>({});
@@ -519,7 +554,7 @@ export function Canvas({
           data: {
             kind: "llm",
             label: llmDef.label,
-            model: llmDef.models?.[0]?.id,
+            ...defaultModelFor("llm"),
             skillId: src.data.skillId,
             prompt: "Turn the skill into a concrete image brief for the next node.",
           },
@@ -531,7 +566,7 @@ export function Canvas({
           data: {
             kind: "image.gen",
             label: imgDef.label,
-            model: imgDef.models?.[0]?.id,
+            ...defaultModelFor("image.gen"),
           },
         },
       ]);
@@ -563,17 +598,17 @@ export function Canvas({
       });
       setDirty(true);
     };
-    window.addEventListener("flowbook:update", onUpdate);
-    window.addEventListener("flowbook:set-artifact", onArtifact);
-    window.addEventListener("flowbook:remove-node", onRemove);
-    window.addEventListener("flowbook:duplicate-node", onDuplicate);
-    window.addEventListener("flowbook:expand-skill", onExpandSkill);
+    window.addEventListener("kun:update", onUpdate);
+    window.addEventListener("kun:set-artifact", onArtifact);
+    window.addEventListener("kun:remove-node", onRemove);
+    window.addEventListener("kun:duplicate-node", onDuplicate);
+    window.addEventListener("kun:expand-skill", onExpandSkill);
     return () => {
-      window.removeEventListener("flowbook:update", onUpdate);
-      window.removeEventListener("flowbook:set-artifact", onArtifact);
-      window.removeEventListener("flowbook:remove-node", onRemove);
-      window.removeEventListener("flowbook:duplicate-node", onDuplicate);
-      window.removeEventListener("flowbook:expand-skill", onExpandSkill);
+      window.removeEventListener("kun:update", onUpdate);
+      window.removeEventListener("kun:set-artifact", onArtifact);
+      window.removeEventListener("kun:remove-node", onRemove);
+      window.removeEventListener("kun:duplicate-node", onDuplicate);
+      window.removeEventListener("kun:expand-skill", onExpandSkill);
     };
   }, [setNodes, setEdges, touch]);
 
@@ -629,13 +664,13 @@ export function Canvas({
           data: {
             kind: type,
             label: def.label,
-            model: def.models?.[0]?.id,
+            ...defaultModelFor(type),
           },
         },
       ]);
       touch();
     },
-    [setNodes, touch],
+    [setNodes, touch, defaultModelFor],
   );
 
   const addNode = useCallback(
@@ -781,6 +816,19 @@ export function Canvas({
         outputsRef.current[ev.nodeId] = ev.outputs;
       if (ev.status === "done" && ev.usage?.costUsd)
         setRunCostUsd((c) => (c ?? 0) + (ev.usage?.costUsd ?? 0));
+      // A completed run is the strongest "recently used" signal — it also
+      // learns from graphs built by others (templates, the assistant).
+      if (ev.status === "done") {
+        const nd = nodesRef.current.find((n) => n.id === ev.nodeId)?.data;
+        if (nd?.model && kindForNode(nd.kind))
+          recordRecent(nd.kind, {
+            id: nd.model,
+            provider:
+              nd.provider && nd.provider !== "openrouter"
+                ? nd.provider
+                : undefined,
+          });
+      }
     },
     [setNodes],
   );
@@ -936,8 +984,8 @@ export function Canvas({
       const { nodeId } = (e as CustomEvent).detail;
       run(nodeId);
     };
-    window.addEventListener("flowbook:run-node", onRunNode);
-    return () => window.removeEventListener("flowbook:run-node", onRunNode);
+    window.addEventListener("kun:run-node", onRunNode);
+    return () => window.removeEventListener("kun:run-node", onRunNode);
   }, [run]);
 
   useEffect(() => {
@@ -1060,7 +1108,7 @@ export function Canvas({
     () =>
       edges.map((e) =>
         statusOf[e.source] === "running" || statusOf[e.target] === "running"
-          ? { ...e, className: "fb-edge-live" }
+          ? { ...e, className: "kun-edge-live" }
           : e,
       ),
     [edges, statusOf],
@@ -1075,7 +1123,7 @@ export function Canvas({
         action={
           <Link
             href="/"
-            className="fb-btn-primary rounded-full px-4 py-2 text-[13px] font-medium"
+            className="kun-btn-primary rounded-full px-4 py-2 text-[13px] font-medium"
           >
             Back to workbooks
           </Link>
@@ -1136,6 +1184,32 @@ export function Canvas({
             nodeTypes={nodeTypes}
             onNodesChange={(c) => {
               if (readOnly) return;
+              // Keyboard deletion (Backspace/Delete) gets the same undo toast
+              // as the header × button.
+              if (c.some((ch) => ch.type === "remove")) {
+                snapshotNow();
+                toast("Node deleted.", "info", {
+                  label: "Undo",
+                  onClick: () => {
+                    const prev = historyRef.current.undo({
+                      nodes: nodesRef.current.map((n) => ({
+                        id: n.id,
+                        type: "flow",
+                        position: n.position,
+                        data: n.data,
+                      })),
+                      edges: edgesRef.current.map((ed) => ({
+                        id: ed.id,
+                        source: ed.source,
+                        sourceHandle: ed.sourceHandle ?? null,
+                        target: ed.target,
+                        targetHandle: ed.targetHandle ?? null,
+                      })),
+                    });
+                    if (prev) applyDoc(prev);
+                  },
+                });
+              }
               onNodesChange(c);
               if (c.some((ch) => ch.type === "position" || ch.type === "remove"))
                 touch();
@@ -1147,6 +1221,7 @@ export function Canvas({
             }}
             onConnect={onConnect}
             isValidConnection={isValidConnection}
+            connectionRadius={34}
             onNodeDoubleClick={onNodeDoubleClick}
             defaultEdgeOptions={{ type: "smoothstep" }}
             fitView
@@ -1161,17 +1236,23 @@ export function Canvas({
               variant={BackgroundVariant.Dots}
               gap={24}
               size={1.3}
-              color="#1c1c1c"
+              color={theme.resolved === "light" ? "#d8d4cc" : "#1c1c1c"}
             />
             {showMini && (
               <MiniMap
                 pannable
                 zoomable
                 position="top-right"
-                maskColor="rgba(9,9,9,0.75)"
+                maskColor={
+                  theme.resolved === "light"
+                    ? "rgba(243, 242, 239, 0.75)"
+                    : "rgba(9, 9, 9, 0.75)"
+                }
                 style={{
-                  background: "#111111",
-                  border: "1px solid #222222",
+                  background: theme.resolved === "light" ? "#ffffff" : "#111111",
+                  border: `1px solid ${
+                    theme.resolved === "light" ? "#ddd9d2" : "#222222"
+                  }`,
                   borderRadius: 10,
                   marginTop: 36,
                   marginRight: 12,
@@ -1185,7 +1266,11 @@ export function Canvas({
               <div className="flex items-center gap-2">
                 <RunsToggle
                   open={showRuns}
-                  onToggle={() => setShowRuns((v) => !v)}
+                  onToggle={() => {
+                    const next = !showRuns;
+                    setShowRuns(next);
+                    syncPanelFlag("runs", next);
+                  }}
                 />
                 <button
                   onClick={arrange}
@@ -1203,8 +1288,13 @@ export function Canvas({
                   </span>
                 </button>
                 <button
-                  onClick={() => setShowMini((v) => !v)}
+                  onClick={() => {
+                    const next = !showMini;
+                    setShowMini(next);
+                    syncPanelFlag("mini", next);
+                  }}
                   title={showMini ? "Hide minimap" : "Show minimap"}
+                  aria-label={showMini ? "Hide minimap" : "Show minimap"}
                   className={`flex h-7 w-7 items-center justify-center rounded-lg border backdrop-blur transition-colors ${
                     showMini
                       ? "border-line2 bg-card text-ink"
@@ -1242,7 +1332,7 @@ export function Canvas({
             </Panel>
             {ready && nodes.length === 0 && (
               <Panel position="top-center">
-                <div className="fb-pop rounded-full border border-line bg-card/80 px-4 py-1.5 text-[11.5px] text-muted backdrop-blur">
+                <div className="kun-pop rounded-full border border-line bg-card/80 px-4 py-1.5 text-[11.5px] text-muted backdrop-blur">
                   Empty workbook — drag a node in from the panel.
                 </div>
               </Panel>
@@ -1277,7 +1367,6 @@ export function Canvas({
                   targetHandle: e.targetHandle ?? null,
                 })),
               }}
-              settings={settingsApi.settings}
               onApply={(next: GraphDoc) => {
                 setNodes(
                   next.nodes.map(
@@ -1299,7 +1388,7 @@ export function Canvas({
             />
           )}
           {showRuns && (
-            <div className="fb-pop absolute bottom-3 right-3 z-10 max-h-[50vh] w-80 overflow-auto rounded-xl border border-line bg-card/95 shadow-2xl backdrop-blur">
+            <div className="kun-pop absolute bottom-3 right-3 z-10 max-h-[50vh] w-80 overflow-auto rounded-xl border border-line bg-card/95 shadow-2xl backdrop-blur">
               <div className="sticky top-0 flex items-center justify-between border-b border-line bg-card/95 px-3 py-2">
                 <span className="font-mono text-[9px] uppercase tracking-[0.18em] text-faint">
                   Run history
@@ -1313,6 +1402,8 @@ export function Canvas({
                   </Link>
                   <button
                     onClick={() => setShowRuns(false)}
+                    aria-label="Close run history"
+                    title="Close run history"
                     className="flex h-4 w-4 items-center justify-center rounded text-faint transition-colors hover:bg-white/5 hover:text-muted"
                   >
                     <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden>
@@ -1333,13 +1424,8 @@ export function Canvas({
 
         {(settingsApi.showSettings || settingsApi.needsOnboard) && (
           <SettingsModal
-            settings={settingsApi.settings}
             env={settingsApi.env}
             onboarding={settingsApi.needsOnboard && !settingsApi.showSettings}
-            onSave={(s) => {
-              settingsApi.persist(s);
-              reloadCatalog();
-            }}
             onClose={settingsApi.dismissOnboard}
           />
         )}

@@ -35,7 +35,7 @@ export async function POST(
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
   const raw = await req.text();
-  const auth = req.headers.get("x-flowbook-signature") ?? req.headers.get("authorization");
+  const auth = req.headers.get("x-kun-signature") ?? req.headers.get("authorization");
   const bearer = auth?.startsWith("Bearer ") ? auth.slice(7) : auth;
   if (!validSig(hook.secret, raw, bearer) && bearer !== hook.secret) {
     return NextResponse.json({ error: "invalid signature" }, { status: 401 });

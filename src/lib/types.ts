@@ -4,7 +4,7 @@ export type NodeOutput =
   | { type: "audio"; artifactId?: string; url?: string }
   | { type: "video"; artifactId?: string; url?: string };
 
-export type ProviderId = string; // "openrouter" | "pyok" | any custom gateway id
+export type ProviderId = string; // always "openrouter" at runtime; legacy ids may persist on old nodes
 
 /** Per-provider credentials, stored in the client's Settings. */
 export interface ProviderConfig {

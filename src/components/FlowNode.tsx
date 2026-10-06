@@ -14,29 +14,21 @@ import {
   filterModels,
   groupModels,
   kindForNode,
+  liveList,
   modelName,
   type ModelInfo,
 } from "@/lib/models";
+import {
+  RECENT_EVENT,
+  pickRecentDefault,
+  recentsFor,
+  recordRecent,
+  type RecentModel,
+} from "@/lib/recent-models";
 import { useCatalog } from "@/lib/model-catalog";
-import { PROVIDER_SPECS } from "@/lib/providers";
 
-/** Which gateway providers may serve this node kind, with UI labels. */
-function providerSpecFor(kind: string): { gateways: string[] } {
-  const caps: Record<string, Array<"chat" | "image" | "video">> = {
-    llm: ["chat"],
-    "image.gen": ["image"],
-    tts: [],
-    "video.gen": ["video"],
-  };
-  const need = caps[kind] ?? [];
-  return {
-    gateways: PROVIDER_SPECS.filter(
-      (s) => s.id !== "openrouter" && need.some((c) => s.caps.includes(c)),
-    ).map((s) => s.id),
-  };
-}
-const gatewayLabel = (pid: string) =>
-  PROVIDER_SPECS.find((s) => s.id === pid)?.label ?? pid;
+/** Legacy gateway tags may persist on old nodes; everything runs on OpenRouter. */
+const gateways: string[] = [];
 import { describeOutputs } from "@/lib/render";
 import {
   CUSTOM_PARAM,
@@ -66,10 +58,12 @@ const PORT_COLORS: Record<PortType, string> = {
 // Port rows stack from the top of the body on the left edge.
 const ROW_H = 24;
 const FIRST_ROW = 12;
+// Visual port size — keep in sync with .react-flow__handle in globals.css.
+const HANDLE = 11;
 
 const patch = (nodeId: string, p: Record<string, unknown>) =>
   window.dispatchEvent(
-    new CustomEvent("flowbook:update", { detail: { nodeId, patch: p } }),
+    new CustomEvent("kun:update", { detail: { nodeId, patch: p } }),
   );
 
 async function saveSkillToLibrary(nodeId: string, d: FlowNodeData) {
@@ -112,14 +106,41 @@ export function FlowNode({ id, data, selected }: NodeProps) {
   const cat = useCatalog();
   const incomingText = useIncomingText(id);
 
+  // Live OpenRouter list, trustworthy only when the last fetch succeeded
+  // (liveList is null otherwise) — the curated suggestions below age, and
+  // picking a retired id fails the run.
+  const need = kindForNode(d.kind) ?? "chat";
+  const live = liveList(cat.models, cat.errors);
+
+  // Recently used models for this node kind, kept fresh across nodes.
+  const [recents, setRecents] = useState<RecentModel[]>(() =>
+    recentsFor(d.kind),
+  );
+  useEffect(() => {
+    const on = () => setRecents(recentsFor(d.kind));
+    window.addEventListener(RECENT_EVENT, on);
+    return () => window.removeEventListener(RECENT_EVENT, on);
+  }, [d.kind]);
+
+  const defaultModel =
+    recents.length || def?.models?.length
+      ? pickRecentDefault(
+          recents,
+          def?.models ?? [],
+          cat.models,
+          cat.errors,
+          need,
+        ).model
+      : "";
+
   useEffect(() => {
     if (d.kind !== "tts" || !d.voice) return;
-    const modelId = d.model ?? def?.models?.[0]?.id;
+    const modelId = d.model ?? defaultModel;
     const listed = voicesForModel(cat.models, modelId);
     if (!resolveVoice(modelId, d.voice, listed)) {
       patch(id, { voice: undefined });
     }
-  }, [cat.models, d.kind, d.model, d.voice, def, id]);
+  }, [cat.models, defaultModel, d.kind, d.model, d.voice, id]);
 
   if (!def) return null;
 
@@ -154,7 +175,7 @@ export function FlowNode({ id, data, selected }: NodeProps) {
         return;
       }
       window.dispatchEvent(
-        new CustomEvent("flowbook:set-artifact", {
+        new CustomEvent("kun:set-artifact", {
           detail: { nodeId: id, artifactId: j.id },
         }),
       );
@@ -195,9 +216,9 @@ export function FlowNode({ id, data, selected }: NodeProps) {
 
   return (
     <div
-      className={`fb-node group ${isSink ? "w-[340px]" : "w-[264px]"} st-${status} ${selected ? "is-selected" : ""}`}
+      className={`kun-node group ${isSink ? "w-[340px]" : "w-[264px]"} st-${status} ${selected ? "is-selected" : ""}`}
     >
-      {status === "running" && <span className="fb-shimmer" />}
+      {status === "running" && <span className="kun-shimmer" />}
 
       {/* header */}
       <header
@@ -205,7 +226,7 @@ export function FlowNode({ id, data, selected }: NodeProps) {
         title="Double-click to run"
       >
         <span
-          className="fb-dot h-1.5 w-1.5 shrink-0 rounded-full"
+          className="kun-dot h-1.5 w-1.5 shrink-0 rounded-full"
           style={{ background: def.color }}
         />
         <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-ink">
@@ -217,13 +238,14 @@ export function FlowNode({ id, data, selected }: NodeProps) {
             onClick={(e) => {
               e.stopPropagation();
               window.dispatchEvent(
-                new CustomEvent("flowbook:run-node", {
+                new CustomEvent("kun:run-node", {
                   detail: { nodeId: id },
                 }),
               );
             }}
             title="Run this node"
-            className="nodrag -mr-0.5 flex h-5 w-5 items-center justify-center rounded text-faint opacity-0 transition-all hover:bg-white/5 hover:text-live focus-visible:opacity-100 group-hover:opacity-100"
+            aria-label="Run this node"
+            className="nodrag -mr-0.5 flex h-5 w-5 items-center justify-center rounded text-faint opacity-0 transition focus-visible:opacity-100 hover:bg-white/5 hover:text-live group-hover:opacity-100"
           >
             <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden>
               <path d="M1.5 0.8 8.5 5 1.5 9.2Z" fill="currentColor" />
@@ -237,13 +259,14 @@ export function FlowNode({ id, data, selected }: NodeProps) {
               onClick={(e) => {
                 e.stopPropagation();
                 window.dispatchEvent(
-                  new CustomEvent("flowbook:duplicate-node", {
+                  new CustomEvent("kun:duplicate-node", {
                     detail: { nodeId: id },
                   }),
                 );
               }}
               title="Duplicate node"
-              className="nodrag flex h-5 w-5 items-center justify-center rounded text-faint opacity-0 transition-all hover:bg-white/5 hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
+              aria-label="Duplicate node"
+              className="nodrag flex h-5 w-5 items-center justify-center rounded text-faint opacity-0 transition focus-visible:opacity-100 hover:bg-white/5 hover:text-ink group-hover:opacity-100"
             >
               <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden>
                 <rect x="0.8" y="2.4" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1.2" fill="none" />
@@ -254,13 +277,14 @@ export function FlowNode({ id, data, selected }: NodeProps) {
               onClick={(e) => {
                 e.stopPropagation();
                 window.dispatchEvent(
-                  new CustomEvent("flowbook:remove-node", {
+                  new CustomEvent("kun:remove-node", {
                     detail: { nodeId: id },
                   }),
                 );
               }}
               title="Delete node"
-              className="nodrag flex h-5 w-5 items-center justify-center rounded text-faint opacity-0 transition-all hover:bg-white/5 hover:text-err focus-visible:opacity-100 group-hover:opacity-100"
+              aria-label="Delete node"
+              className="nodrag flex h-5 w-5 items-center justify-center rounded text-faint opacity-0 transition focus-visible:opacity-100 hover:bg-white/5 hover:text-err group-hover:opacity-100"
             >
               <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden>
                 <path
@@ -298,8 +322,8 @@ export function FlowNode({ id, data, selected }: NodeProps) {
                 position={Position.Left}
                 style={{
                   background: PORT_COLORS[p.type],
-                  left: -5,
-                  top: mid - 4,
+                  left: -HANDLE / 2,
+                  top: mid - HANDLE / 2,
                 }}
                 title={`${p.label} (${p.type})`}
               />
@@ -325,9 +349,9 @@ export function FlowNode({ id, data, selected }: NodeProps) {
                 position={Position.Right}
                 style={{
                   background: PORT_COLORS[p.type],
-                  right: -5,
-                  top: mid !== null ? mid - 4 : "50%",
-                  marginTop: mid !== null ? 0 : -4,
+                  right: -HANDLE / 2,
+                  top: mid !== null ? mid - HANDLE / 2 : "50%",
+                  marginTop: mid !== null ? 0 : -HANDLE / 2,
                 }}
                 title={`${p.label} (${p.type})`}
               />
@@ -348,6 +372,7 @@ export function FlowNode({ id, data, selected }: NodeProps) {
           <textarea
             value={d.text ?? ""}
             onChange={(e) => patch(id, { text: e.target.value })}
+            aria-label={d.kind === "note" ? "Instruction" : "Text"}
             placeholder={
               d.kind === "note" ? "Instruction…" : "Paste text or an article…"
             }
@@ -372,7 +397,8 @@ export function FlowNode({ id, data, selected }: NodeProps) {
             <textarea
               value={d.text ?? ""}
               onChange={(e) => patch(id, { text: e.target.value })}
-              placeholder="Skill instructions appear here — edit before wiring into an AI node."
+              aria-label="Skill instructions"
+              placeholder="Skill instructions appear here — edit before wiring into an AI node…"
               rows={5}
               className="nodrag nowheel mb-2 w-full resize-y rounded-md border border-line bg-sunken px-2 py-1.5 text-[12px] leading-relaxed text-ink/85 outline-none transition-colors placeholder:text-faint focus:border-line2"
             />
@@ -388,7 +414,7 @@ export function FlowNode({ id, data, selected }: NodeProps) {
                 type="button"
                 onClick={() =>
                   window.dispatchEvent(
-                    new CustomEvent("flowbook:expand-skill", { detail: { nodeId: id } }),
+                    new CustomEvent("kun:expand-skill", { detail: { nodeId: id } }),
                   )
                 }
                 className="nodrag rounded-md border border-line px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-muted transition-colors hover:border-line2 hover:text-ink"
@@ -410,9 +436,10 @@ export function FlowNode({ id, data, selected }: NodeProps) {
                 : (d.prompt ?? "")
             }
             onChange={(e) => patch(id, { prompt: e.target.value })}
+            aria-label="Prompt"
             placeholder={
               d.kind === "llm"
-                ? "What should the model do with the input?"
+                ? "What should the model do with the input…"
                 : d.kind === "image.gen"
                   ? "Describe the image — or how to edit the reference…"
                   : d.kind === "tts"
@@ -438,8 +465,8 @@ export function FlowNode({ id, data, selected }: NodeProps) {
         )}
 
         {def.models && def.models.length > 0 && (() => {
-          const need = kindForNode(d.kind) ?? "chat";
-          const spec = providerSpecFor(d.kind);
+          const suggested = def.models ?? [];
+          const need = kindForNode(d.kind);
           const seen = new Set<string>();
           const groups: { provider: string; label: string; items: ModelInfo[] }[] =
             [];
@@ -457,33 +484,57 @@ export function FlowNode({ id, data, selected }: NodeProps) {
             if (unique.length) groups.push({ provider, label, items: unique });
           };
 
-          addGroup("suggested", "Suggested", def.models);
+          // Recently used first — a personal, always-current basis, unlike
+          // the curated suggestions. Labels come from the record, the live
+          // list, or the suggestions, so a retired model keeps its name.
+          const liveById = new Map((live ?? []).map((m) => [m.id, m.label]));
+          addGroup(
+            "recent",
+            "Recent",
+            recents.map((r) => ({
+              id: r.id,
+              label:
+                r.label ??
+                liveById.get(r.id) ??
+                suggested.find((s) => s.id === r.id)?.label ??
+                r.id,
+            })),
+          );
 
-          for (const g of groupModels(
-            filterModels(cat.models.openrouter ?? [], need),
-          )) {
-            addGroup(g.provider, g.label, g.items);
+          addGroup("suggested", "Suggested", suggested);
+
+          if (need) {
+            for (const g of groupModels(
+              filterModels(cat.models.openrouter ?? [], need),
+            )) {
+              addGroup(g.provider, g.label, g.items);
+            }
           }
 
-          const gatewayProviders = spec.gateways
-            .map((pid) => ({
-              pid,
-              items: filterModels(cat.models[pid] ?? [], need),
-            }))
-            .filter((g) => g.items.length > 0);
-          for (const g of gatewayProviders)
-            addGroup(g.pid, gatewayLabel(g.pid), g.items);
-
           const knownIds = [...seen];
-          const inGateway = gatewayProviders.some((g) =>
-            g.items.some((m) => m.id === d.model),
-          );
           const orphanGateway =
-            !!d.provider && d.provider !== "openrouter" && !!d.model && !inGateway;
+            !!d.provider && d.provider !== "openrouter" && !!d.model;
           const showCustom =
-            !inGateway &&
             !orphanGateway &&
             (customModel || (!!d.model && !knownIds.includes(d.model)));
+
+          // Suggested and recent ids are OpenRouter's namespace, so only
+          // they can be checked against its live list — gateway ids are
+          // their own.
+          const listedIds = live ? new Set(live.map((m) => m.id)) : null;
+          const orGone = "no longer listed by OpenRouter";
+          const retiredNote = new Map<string, string>();
+          if (listedIds) {
+            for (const s of suggested)
+              if (!listedIds.has(s.id)) retiredNote.set(s.id, orGone);
+            for (const r of recents)
+              if (
+                (!r.provider || r.provider === "openrouter") &&
+                !listedIds.has(r.id)
+              )
+                retiredNote.set(r.id, orGone);
+          }
+
 
           const pickModel = (value: string) => {
             if (value === CUSTOM_MODEL) {
@@ -491,15 +542,20 @@ export function FlowNode({ id, data, selected }: NodeProps) {
               patch(id, { model: "", provider: "openrouter" });
               return;
             }
-            const fromGateway = gatewayProviders.find((g) =>
-              g.items.some((m) => m.id === value),
-            );
             const listed = voicesForModel(cat.models, value);
+            const provider = "openrouter";
             const voice = resolveVoice(value, d.voice, listed);
             patch(id, {
               model: value,
-              provider: fromGateway ? fromGateway.pid : "openrouter",
+              provider,
               ...(d.kind === "tts" ? { voice } : {}),
+            });
+            recordRecent(d.kind, {
+              id: value,
+              provider: provider === "openrouter" ? undefined : provider,
+              label: groups
+                .flatMap((g) => g.items)
+                .find((m) => m.id === value)?.label,
             });
           };
 
@@ -510,11 +566,13 @@ export function FlowNode({ id, data, selected }: NodeProps) {
                   <input
                     value={d.model ?? ""}
                     onChange={(e) => patch(id, { model: e.target.value })}
+                    autoComplete="off"
                     spellCheck={false}
+                    aria-label="Custom model id"
                     placeholder={
                       orphanGateway
-                        ? "gateway offline — model id kept"
-                        : "provider/model — any OpenRouter id"
+                        ? "gateway offline — model id kept…"
+                        : "provider/model — any OpenRouter id…"
                     }
                     title={
                       orphanGateway
@@ -527,9 +585,13 @@ export function FlowNode({ id, data, selected }: NodeProps) {
                     <button
                       onClick={() => {
                         setCustomModel(false);
-                        patch(id, { model: knownIds[0], provider: "openrouter" });
+                        patch(id, {
+                          model: defaultModel || knownIds[0],
+                          provider: "openrouter",
+                        });
                       }}
                       title="Back to preset models"
+                      aria-label="Back to preset models"
                       className="absolute right-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded text-faint transition-colors hover:bg-white/5 hover:text-muted"
                     >
                       <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden>
@@ -540,17 +602,25 @@ export function FlowNode({ id, data, selected }: NodeProps) {
                 </div>
               ) : (
                 <select
-                  value={d.model ?? def.models[0].id}
+                  value={d.model ?? defaultModel}
                   onChange={(e) => pickModel(e.target.value)}
                   className="nodrag mb-2 w-full rounded-md border border-line bg-sunken px-2 py-1.5 font-mono text-[10.5px] text-muted outline-none transition-colors focus:border-line2"
                 >
                   {groups.map((g) => (
                     <optgroup key={`${g.provider}-${g.label}`} label={g.label}>
-                      {g.items.map((m) => (
-                        <option key={m.id} value={m.id} title={m.id}>
-                          {modelName(m)}
-                        </option>
-                      ))}
+                      {g.items.map((m) => {
+                        const note = retiredNote.get(m.id);
+                        return (
+                          <option
+                            key={m.id}
+                            value={m.id}
+                            disabled={!!note}
+                            title={note ? `${m.id} — ${note}` : m.id}
+                          >
+                            {modelName(m)}
+                          </option>
+                        );
+                      })}
                     </optgroup>
                   ))}
                   <option value={CUSTOM_MODEL}>Custom model…</option>
@@ -626,8 +696,8 @@ export function FlowNode({ id, data, selected }: NodeProps) {
             value={d.voice}
             onChange={(voice) => patch(id, { voice })}
             options={voiceChoices(
-              d.model ?? def.models?.[0]?.id,
-              voicesForModel(cat.models, d.model ?? def.models?.[0]?.id),
+              d.model ?? defaultModel,
+              voicesForModel(cat.models, d.model ?? defaultModel),
             )}
             autoLabel="Voice · Auto"
             customPlaceholder="this model's voice id"
@@ -675,7 +745,7 @@ export function FlowNode({ id, data, selected }: NodeProps) {
         ---------------------------------------------------------------- */}
         {isSink &&
           (hasContent ? (
-            <div key={sig} className="fb-rise space-y-2.5">
+            <div key={sig} className="kun-rise space-y-2.5">
               <div className="flex items-center justify-between px-0.5">
                 <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-faint">
                   {status === "running" && streaming
@@ -704,7 +774,7 @@ export function FlowNode({ id, data, selected }: NodeProps) {
               {status === "running" && streaming ? (
                 <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-line bg-sunken px-2.5 py-2 font-mono text-[10.5px] leading-relaxed text-ink/80">
                   {streaming}
-                  <span className="fb-caret" aria-hidden />
+                  <span className="kun-caret" aria-hidden />
                 </pre>
               ) : (
                 outputs.map((o, i) =>
@@ -812,6 +882,7 @@ function OptionalParam({
     <div className={`min-w-0 ${className}`}>
       <select
         value={selectValue}
+        aria-label={autoLabel}
         onChange={(e) => {
           const next = e.target.value;
           if (next === CUSTOM_PARAM) {
@@ -860,7 +931,7 @@ function StatusMark({ status }: { status: string }) {
             : "var(--color-line2)";
   return (
     <span
-      className="fb-dot h-1.5 w-1.5 shrink-0 rounded-full"
+      className="kun-dot h-1.5 w-1.5 shrink-0 rounded-full"
       style={{ background: color }}
       title={status}
     />
@@ -870,7 +941,7 @@ function StatusMark({ status }: { status: string }) {
 function Spinner({ className = "" }: { className?: string }) {
   return (
     <svg
-      className={`fb-spin shrink-0 ${className}`}
+      className={`kun-spin shrink-0 ${className}`}
       width="11"
       height="11"
       viewBox="0 0 12 12"
@@ -891,6 +962,8 @@ function MediaPreview({ url, kind }: { url: string; kind: string }) {
       <img
         src={url}
         alt=""
+        width={448}
+        height={224}
         className="nowheel mt-2 max-h-56 w-full rounded-md border border-line object-cover"
       />
     );

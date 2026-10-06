@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
     }
     const body = await req.json().catch(() => ({}));
     if (!isPortable(body) && !isPortable(body.workbook)) {
-      return NextResponse.json({ error: "flowbook workbook JSON required" }, { status: 400 });
+      return NextResponse.json({ error: "Kun workbook JSON required" }, { status: 400 });
     }
     const pack = isPortable(body) ? body : body.workbook;
     await materializePortableSkills(actor.org.id, actor.user.id, pack.skills);

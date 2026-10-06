@@ -55,7 +55,7 @@ export async function tickSchedules() {
   const due = await db
     .select()
     .from(schedules)
-    .where(and(eq(schedules.enabled, 1), lte(schedules.nextRunAt, new Date())));
+    .where(and(eq(schedules.enabled, true), lte(schedules.nextRunAt, new Date())));
   for (const row of due) {
     const [org] = await db
       .select()

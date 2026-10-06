@@ -12,8 +12,8 @@ export function StatusScreen({
   action?: ReactNode;
 }) {
   return (
-    <div className="fb-atmosphere relative flex min-h-dvh items-center justify-center px-6">
-      <div className="fb-grain" aria-hidden />
+    <div className="kun-atmosphere relative flex min-h-dvh items-center justify-center px-6">
+      <div className="kun-grain" aria-hidden />
       <div className="relative z-10 w-full max-w-md text-center">
         <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-faint">
           {kicker}

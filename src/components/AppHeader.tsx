@@ -1,15 +1,23 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Wordmark } from "./Wordmark";
+import { fetchSessionInfo } from "@/lib/session-info";
 
 export function AppHeader({
   active,
   onSettings,
 }: {
-  active: "home" | "runs" | "billing" | "templates";
+  active: "home" | "runs" | "billing" | "templates" | "pricing";
   onSettings?: () => void;
 }) {
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    void fetchSessionInfo().then((s) => setIsAdmin(!!s.platformAdmin));
+  }, []);
+
   return (
     <header className="relative z-10 flex h-14 shrink-0 items-center gap-6 border-b border-line/80 px-5">
       <Link href="/" className="shrink-0">
@@ -25,9 +33,17 @@ export function AppHeader({
         <NavLink href="/templates" current={active === "templates"}>
           Templates
         </NavLink>
+        <NavLink href="/pricing" current={active === "pricing"}>
+          Pricing
+        </NavLink>
         <NavLink href="/billing" current={active === "billing"}>
           Plan
         </NavLink>
+        {isAdmin && (
+          <NavLink href="/admin" current={false}>
+            Admin
+          </NavLink>
+        )}
       </nav>
       {onSettings && (
         <button

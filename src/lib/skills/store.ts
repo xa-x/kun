@@ -88,6 +88,24 @@ export async function listSkills(orgId: string): Promise<SkillSummary[]> {
   return out.sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
+/** Full records (bodies included) — org rows plus bundled skills — for export. */
+export async function listSkillRecords(orgId: string): Promise<SkillRecord[]> {
+  const rows = orgId
+    ? await db.select().from(skills).where(eq(skills.orgId, orgId))
+    : [];
+  const seen = new Set<string>();
+  const out: SkillRecord[] = [];
+  for (const row of rows) {
+    seen.add(row.slug);
+    out.push(asRecord(row));
+  }
+  for (const b of BUILTIN_SKILLS) {
+    if (seen.has(b.slug)) continue;
+    out.push(builtinRecord(b));
+  }
+  return out.sort((a, b) => a.displayName.localeCompare(b.displayName));
+}
+
 export async function getSkill(
   orgId: string,
   skillId: string,

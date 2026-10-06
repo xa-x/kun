@@ -98,7 +98,7 @@ export function shrinkReferenceImage(data: Uint8Array): Uint8Array {
   if (process.platform !== "darwin") return data;
   const tmp = path.join(
     os.tmpdir(),
-    `flowbook-ref-${crypto.randomBytes(6).toString("hex")}.jpg`,
+    `kun-ref-${crypto.randomBytes(6).toString("hex")}.jpg`,
   );
   try {
     fs.writeFileSync(tmp, data);

@@ -1,36 +1,35 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { RunSettings } from "./types";
-import { hasUsableProvider, loadSettings, saveSettings } from "./settings";
 import { readJson } from "./http";
 
+/**
+ * Server-managed provider state. Keys live in the server's .env — there is
+ * nothing to enter in the browser, so this hook only reports whether the
+ * platform provider is configured (for onboarding badges and the settings
+ * dialog).
+ */
 export function useSettings() {
-  const [settings, setSettings] = useState<RunSettings>(() => ({
-    providers: {},
-  }));
   const [env, setEnv] = useState<Record<string, boolean>>({});
   const [showSettings, setShowSettings] = useState(false);
-  const [onboardDismissed, setOnboardDismissed] = useState(false);
   const [booted, setBooted] = useState(false);
+  const [onboardDismissed, setOnboardDismissed] = useState(false);
 
   useEffect(() => {
     let alive = true;
     (async () => {
-      const local = loadSettings();
       let cfg: { envProviders?: Record<string, boolean> } = {};
       try {
         cfg = await fetch("/api/config").then((r) =>
           readJson<{ envProviders?: Record<string, boolean> }>(r),
         );
       } catch {
-        /* server unreachable — treat as env-less */
+        /* server unreachable — treat as unconfigured */
       }
       if (!alive) return;
-      setSettings(local);
       setEnv(cfg.envProviders ?? {});
       setOnboardDismissed(
-        window.localStorage.getItem("flowbook.onboarded") === "1",
+        window.localStorage.getItem("kun.onboarded") === "1",
       );
       setBooted(true);
     })();
@@ -39,36 +38,24 @@ export function useSettings() {
     };
   }, []);
 
-  const persist = (s: RunSettings) => {
-    setSettings(s);
-    saveSettings(s);
-    window.localStorage.setItem("flowbook.onboarded", "1");
-    setOnboardDismissed(true);
-    void fetch("/api/credentials", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(s),
-    }).catch(() => {});
-  };
-
   const dismissOnboard = () => {
-    if (!hasUsableProvider(settings, env))
-      window.localStorage.setItem("flowbook.onboarded", "1");
+    if (!env.openrouter)
+      window.localStorage.setItem("kun.onboarded", "1");
     setOnboardDismissed(true);
     setShowSettings(false);
   };
 
-  const needsOnboard =
-    booted && !hasUsableProvider(settings, env) && !onboardDismissed;
+  const needsOnboard = booted && !env.openrouter && !onboardDismissed;
 
   return {
-    settings,
+    settings: { providers: {} },
     env,
     booted,
     showSettings,
     setShowSettings,
-    persist,
     dismissOnboard,
     needsOnboard,
+    /** True when the platform's OpenRouter key is present server-side. */
+    configured: !!env.openrouter,
   };
 }

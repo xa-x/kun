@@ -4,7 +4,6 @@ import type {
   NodeData,
   NodeOutput,
   RunEvent,
-  RunSettings,
   UsageInfo,
 } from "./types";
 import { nodeDef } from "./nodes";
@@ -15,7 +14,8 @@ import {
   sniffMime,
 } from "./artifacts";
 import { ensurePlayableAudio } from "./audio";
-import { resolveProvider, providerSpec, canonicalProviderId } from "./providers";
+import { resolveProvider } from "./providers";
+import { isModelEnabled, applyMargin } from "./model-policy";
 import {
   requireAspect,
   requireDuration,
@@ -45,7 +45,7 @@ export const modelFor = (d: NodeData) =>
   d.model || DEFAULTS[d.kind]?.model || "";
 
 export const providerFor = (d: NodeData) =>
-  canonicalProviderId(d.provider || DEFAULTS[d.kind]?.provider || DEFAULT_PROVIDER);
+  d.provider || DEFAULTS[d.kind]?.provider || DEFAULT_PROVIDER;
 
 /** Collect text-ish inputs (strings) into prompt parts. */
 function textInputs(inputs: Record<string, NodeOutput[]>) {
@@ -83,7 +83,6 @@ async function skillFor(data: NodeData, orgId?: string): Promise<SkillRecord | n
 }
 
 export interface RunCtx {
-  settings?: RunSettings;
   emit: (e: RunEvent) => void;
   nodeId: string;
   orgId?: string;
@@ -133,8 +132,6 @@ export async function runNode(
   inputs: Record<string, NodeOutput[]>,
   ctx: RunCtx,
 ): Promise<NodeResult> {
-  const settings = ctx.settings;
-
   switch (data.kind) {
     case "text":
     case "note":
@@ -166,9 +163,10 @@ export async function runNode(
       const skill = await skillFor(data, ctx.orgId);
       const prompt = promptFrom(inputs, data);
       if (!prompt.trim() && !skill?.instructions) return { outputs: [] };
-      const provider = providerFor(data);
       const model = modelFor(data);
-      const p = resolveProvider(provider, settings);
+      if (!(await isModelEnabled(model)))
+        throw new Error(`Model "${model}" is disabled by the administrator.`);
+      const p = resolveProvider();
       // vision: attach first upstream image
       const image = (inputs.image ?? []).find((o) => o.type === "image") as
         | { type: "image"; url?: string; artifactId?: string }
@@ -217,12 +215,12 @@ export async function runNode(
       );
       return {
         outputs: [{ type: "text", text }],
-        usage: {
+        usage: await applyMargin(model, {
           tokensIn: fromMeta.tokensIn ?? u?.inputTokens,
           tokensOut: fromMeta.tokensOut ?? u?.outputTokens,
           costUsd: fromMeta.costUsd,
           model,
-        },
+        }),
       };
     }
 
@@ -234,8 +232,10 @@ export async function runNode(
           o.type === "image",
       );
       if (!prompt.trim() && !refs.length) return { outputs: [] };
-      const p = resolveProvider(providerFor(data), settings);
       const model = modelFor(data);
+      if (!(await isModelEnabled(model)))
+        throw new Error(`Model "${model}" is disabled by the administrator.`);
+      const p = resolveProvider();
 
       const images: Array<Uint8Array | string> = [];
       for (const ref of refs) images.push(await loadImageBytes(ref));
@@ -268,7 +268,7 @@ export async function runNode(
         outputs: [
           { type: "image", artifactId: art.id, url: `/api/media/${art.id}` },
         ],
-        usage: usageFromUnknown(generated, { model }),
+        usage: await applyMargin(model, usageFromUnknown(generated, { model })),
       };
     }
 
@@ -278,8 +278,10 @@ export async function runNode(
       if (!prompt.trim()) return { outputs: [] };
       // The provider instance has no speech model — call the provider's
       // OpenAI-compatible speech endpoint directly.
-      const p = resolveProvider(providerFor(data), settings);
       const model = modelFor(data);
+      if (!(await isModelEnabled(model)))
+        throw new Error(`Model "${model}" is disabled by the administrator.`);
+      const p = resolveProvider();
       const voice = resolveVoice(model, data.voice);
       const res = await fetch(`${p.baseUrl.replace(/\/$/, "")}/audio/speech`, {
         method: "POST",
@@ -316,11 +318,11 @@ export async function runNode(
         outputs: [
           { type: "audio", artifactId: art.id, url: `/api/media/${art.id}` },
         ],
-        usage: {
+        usage: await applyMargin(model, {
           model,
           costUsd:
             Number.isFinite(headerCost) && headerCost > 0 ? headerCost : undefined,
-        },
+        }),
       };
     }
 
@@ -332,15 +334,10 @@ export async function runNode(
       ) as { type: "image"; artifactId?: string; url?: string } | undefined;
       if (!prompt.trim() && !firstFrame) return { outputs: [] };
 
-      const provider = providerFor(data);
-      const spec = providerSpec(provider);
-      if (spec && !spec.caps.includes("video"))
-        throw new Error(
-          `Provider "${provider}" does not serve video models — use OpenRouter.`,
-        );
-
-      const p = resolveProvider(provider, settings);
       const model = modelFor(data);
+      if (!(await isModelEnabled(model)))
+        throw new Error(`Model "${model}" is disabled by the administrator.`);
+      const p = resolveProvider();
       let frameImages:
         | { image: Uint8Array | string; frameType: "first_frame" }[]
         | undefined;
@@ -394,7 +391,7 @@ export async function runNode(
         outputs: [
           { type: "video", artifactId: art.id, url: `/api/media/${art.id}` },
         ],
-        usage: usageFromUnknown(generated, { model }),
+        usage: await applyMargin(model, usageFromUnknown(generated, { model })),
       };
     }
 

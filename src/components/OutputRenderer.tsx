@@ -24,7 +24,7 @@ function filenameFor(kind: string, src: string) {
   if (fromUrl && fromUrl.includes(".")) return fromUrl;
   const ext =
     kind === "video" ? "mp4" : kind === "audio" ? "mp3" : kind === "image" ? "png" : "bin";
-  return `flowbook-${kind}.${ext}`;
+  return `kun-${kind}.${ext}`;
 }
 
 export function downloadOutputs(
@@ -75,7 +75,7 @@ function BlockView({ block }: { block: OutputBlock }) {
     case "md":
       return (
         <div
-          className="fb-prose nowheel max-h-[420px] overflow-auto rounded-lg border border-line bg-sunken px-3 py-2.5"
+          className="kun-prose nowheel max-h-[420px] overflow-auto rounded-lg border border-line bg-sunken px-3 py-2.5"
           dangerouslySetInnerHTML={{ __html: mdToHtml(block.text) }}
         />
       );
@@ -137,7 +137,7 @@ function HtmlPreview({ code }: { code: string }) {
       </div>
       {view === "preview" ? (
         <iframe
-          className="fb-frame nowheel h-[340px]"
+          className="kun-frame nowheel h-[340px]"
           sandbox="allow-scripts allow-forms allow-popups allow-modals"
           referrerPolicy="no-referrer"
           srcDoc={code}
@@ -187,7 +187,7 @@ function JsonViewer({ text }: { text: string }) {
     }
   }, [text]);
   return (
-    <details className="fb-json nowheel overflow-hidden rounded-lg border border-line bg-sunken">
+    <details className="kun-json nowheel overflow-hidden rounded-lg border border-line bg-sunken">
       <summary className="cursor-pointer list-none px-2.5 py-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-faint transition-colors hover:text-muted">
         {"{ }"} JSON · {pretty.split("\n").length.toLocaleString()} lines
       </summary>
@@ -215,7 +215,7 @@ function MediaEmbed({ kind, src }: { kind: string; src: string }) {
       <div className="group relative">
         {link}
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={src} alt="" className="fb-media nowheel max-h-56 w-full object-cover" />
+        <img src={src} alt="" className="kun-media nowheel max-h-56 w-full object-cover" />
       </div>
     );
   if (kind === "audio")
@@ -239,7 +239,7 @@ function MediaEmbed({ kind, src }: { kind: string; src: string }) {
           playsInline
           preload="metadata"
           src={src}
-          className="fb-media nowheel max-h-56 w-full bg-black"
+          className="kun-media nowheel max-h-56 w-full bg-black"
         />
       </div>
     );

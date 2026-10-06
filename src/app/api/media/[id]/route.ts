@@ -1,12 +1,37 @@
 import { NextRequest } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { db } from "@/db";
-import { artifacts } from "@/db/schema";
-import { ensureActor } from "@/lib/auth";
+import { artifacts, runs, shares, type ArtifactRow } from "@/db/schema";
+import { resolveActor } from "@/lib/auth";
 import { objectStore } from "@/lib/storage";
 import { ensurePlayableAudio } from "@/lib/audio";
 
 export const runtime = "nodejs";
+
+/**
+ * Anonymous access is allowed only when the artifact belongs to a graph with
+ * an active share link — that is what /s/[token] view pages render.
+ */
+async function reachableViaActiveShare(row: ArtifactRow) {
+  if (!row.runId) return false;
+  const [run] = await db
+    .select({ graphId: runs.graphId })
+    .from(runs)
+    .where(eq(runs.id, row.runId))
+    .limit(1);
+  if (!run) return false;
+  const [share] = await db
+    .select({ id: shares.id })
+    .from(shares)
+    .where(
+      and(
+        eq(shares.graphId, run.graphId),
+        or(isNull(shares.expiresAt), gt(shares.expiresAt, new Date())),
+      ),
+    )
+    .limit(1);
+  return Boolean(share);
+}
 
 function fileNameOf(filename: string, id: string, mime: string) {
   const base = filename.split("/").pop() || "";
@@ -27,7 +52,7 @@ function fileNameOf(filename: string, id: string, mime: string) {
                 : mime === "image/png"
                   ? "png"
                   : "bin";
-  return base || `flowbook-${id}.${ext}`;
+  return base || `kun-${id}.${ext}`;
 }
 
 export async function GET(
@@ -37,12 +62,12 @@ export async function GET(
   const { id } = await params;
   const [row] = await db.select().from(artifacts).where(eq(artifacts.id, id)).limit(1);
   if (!row) return new Response("not found", { status: 404 });
-  try {
-    const actor = await ensureActor(req);
+  const actor = await resolveActor(req).catch(() => null);
+  if (actor) {
     if (row.orgId && row.orgId !== actor.org.id) {
       return new Response("not found", { status: 404 });
     }
-  } catch {
+  } else if (!(await reachableViaActiveShare(row))) {
     return new Response("unauthorized", { status: 401 });
   }
 

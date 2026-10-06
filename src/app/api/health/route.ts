@@ -6,5 +6,5 @@ export const dynamic = "force-dynamic";
 /** Health check for the background-process watchdog. */
 export async function GET() {
   ensureJobLoop();
-  return NextResponse.json({ ok: true, app: "flowbook" });
+  return NextResponse.json({ ok: true, app: "kun" });
 }

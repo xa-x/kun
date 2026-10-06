@@ -1,6 +1,6 @@
 /**
- * Model catalog helpers — keeps per-node model lists organized by provider
- * and supports custom / gateway models (e.g. PYOK, "pyok/<model>").
+ * Model catalog helpers — keeps per-node model lists organized and supports
+ * the OpenRouter catalog (vendor-prefixed ids like "openai/gpt-5.2").
  */
 
 export type ModelModality = "text" | "image" | "audio" | "video";
@@ -62,6 +62,72 @@ export function filterModels(
   kind: NodeModelKind,
 ): ModelInfo[] {
   return models.filter((m) => modelFits(m, kind));
+}
+
+/** Catalog state shared between /api/models and its client cache. */
+export interface ModelCatalogCore {
+  models: Record<string, ModelInfo[]>;
+  updatedAt: number;
+  /** Providers whose last fetch failed, with a short reason. */
+  errors?: Record<string, string>;
+}
+
+/**
+ * Fold a fresh /api/models response into the catalog. A provider that failed
+ * to fetch keeps its previous list — a network blip must not empty the
+ * pickers back to the static (aging) suggestions. A successful fetch always
+ * wins, even when it returns nothing (the key was removed, or the provider
+ * really serves no models for that capability).
+ */
+export function mergeRefresh(
+  prev: ModelCatalogCore,
+  next: ModelCatalogCore,
+): ModelCatalogCore {
+  if (prev.updatedAt > next.updatedAt) return prev; // slower in-flight response
+  const models = { ...next.models };
+  for (const [pid, err] of Object.entries(next.errors ?? {})) {
+    if (!err) continue;
+    const kept = prev.models[pid];
+    if (kept?.length) models[pid] = kept;
+  }
+  const failed = Object.entries(next.errors ?? {}).filter(([, e]) => e);
+  return {
+    models,
+    updatedAt: next.updatedAt,
+    errors: failed.length ? Object.fromEntries(failed) : undefined,
+  };
+}
+
+/**
+ * A provider's live list, but only when the last fetch actually succeeded —
+ * an empty list from a failed fetch says nothing about what exists, so
+ * availability checks must treat it as "unknown" (null), not "no models".
+ */
+export function liveList(
+  models: Record<string, ModelInfo[]>,
+  errors: Record<string, string> | undefined,
+  provider = "openrouter",
+): ModelInfo[] | null {
+  if (errors?.[provider]) return null;
+  const list = models[provider];
+  return list?.length ? list : null;
+}
+
+/**
+ * Default model for a new node: the first curated suggestion the provider
+ * still lists; when every suggestion has been retired, any live model beats
+ * an id that would 404 on run. Without live data, trust the suggestions.
+ */
+export function pickDefaultModel(
+  suggested: { id: string }[],
+  live: ModelInfo[] | null,
+): string {
+  if (live?.length) {
+    const ids = new Set(live.map((m) => m.id));
+    const hit = suggested.find((s) => ids.has(s.id));
+    return hit ? hit.id : live[0].id;
+  }
+  return suggested[0]?.id ?? "";
 }
 
 export const PROVIDER_LABELS: Record<string, string> = {

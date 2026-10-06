@@ -5,16 +5,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { NODE_TYPES } from "@/lib/nodes";
 import { readJson } from "@/lib/http";
-import { useSettings } from "@/lib/use-settings";
-import { AppHeader } from "./AppHeader";
-import { SettingsModal } from "./SettingsModal";
 import { toast } from "./Toast";
 import type { TemplateMeta } from "./TemplateGallery";
 import type { PortableWorkbook } from "@/lib/portable";
 
 export function TemplateDetail({ slug }: { slug: string }) {
   const router = useRouter();
-  const settings = useSettings();
   const [item, setItem] = useState<
     (TemplateMeta & { workbook?: PortableWorkbook }) | null | undefined
   >(undefined);
@@ -59,12 +55,7 @@ export function TemplateDetail({ slug }: { slug: string }) {
   const unique = [...new Set(kinds)];
 
   return (
-    <div className="fb-atmosphere relative flex min-h-dvh flex-col">
-      <div className="fb-grain" aria-hidden />
-      <AppHeader
-        active="templates"
-        onSettings={() => settings.setShowSettings(true)}
-      />
+    <>
       <main className="relative z-10 mx-auto w-full max-w-2xl flex-1 px-5 py-10">
         {item === undefined && (
           <div className="h-48 animate-pulse rounded-2xl border border-line bg-card/60" />
@@ -108,22 +99,13 @@ export function TemplateDetail({ slug }: { slug: string }) {
               type="button"
               onClick={() => void clone()}
               disabled={cloning}
-              className="fb-btn-primary mt-6 rounded-full px-4 py-2 text-[13px] font-medium disabled:opacity-50"
+              className="kun-btn-primary mt-6 rounded-full px-4 py-2 text-[13px] font-medium disabled:opacity-50"
             >
               {cloning ? "Cloning…" : "Use this template"}
             </button>
           </>
         )}
       </main>
-      {(settings.showSettings || settings.needsOnboard) && (
-        <SettingsModal
-          settings={settings.settings}
-          env={settings.env}
-          onboarding={settings.needsOnboard && !settings.showSettings}
-          onSave={settings.persist}
-          onClose={settings.dismissOnboard}
-        />
-      )}
-    </div>
+    </>
   );
 }

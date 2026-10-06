@@ -8,7 +8,7 @@ import {
   type AssistantMessage,
   type GraphOp,
 } from "@/lib/assistant";
-import type { GraphDoc, RunSettings } from "@/lib/types";
+import type { GraphDoc } from "@/lib/types";
 import { toast } from "./Toast";
 
 interface ChatRow extends AssistantMessage {
@@ -18,19 +18,17 @@ interface ChatRow extends AssistantMessage {
 export function AssistantPanel({
   graphId,
   graph,
-  settings,
   selectedNodeIds,
   onApply,
   onClose,
 }: {
   graphId: string;
   graph: GraphDoc;
-  settings?: RunSettings;
   selectedNodeIds?: string[];
   onApply: (next: GraphDoc) => void;
   onClose: () => void;
 }) {
-  const storageKey = `flowbook.assistant.${graphId}`;
+  const storageKey = `kun.assistant.${graphId}`;
   const [rows, setRows] = useState<ChatRow[]>([]);
   const [draft, setDraft] = useState("");
   const [mentions, setMentions] = useState<AssistantMention[]>([]);
@@ -134,7 +132,6 @@ export function AssistantPanel({
           graph,
           graphId,
           selectedNodeIds,
-          settings,
         }),
       });
       if (!res.ok) {
@@ -204,7 +201,7 @@ export function AssistantPanel({
   };
 
   return (
-    <aside className="fb-pop absolute inset-y-3 right-3 z-20 flex w-[360px] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-xl border border-line bg-card/95 shadow-2xl shadow-black/50 backdrop-blur">
+    <aside className="kun-pop absolute inset-y-3 right-3 z-20 flex w-[360px] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-xl border border-line bg-card/95 shadow-2xl shadow-black/50 backdrop-blur">
       <header className="flex items-center justify-between border-b border-line px-3 py-2.5">
         <div>
           <p className="font-mono text-[9px] uppercase tracking-[0.18em] text-faint">
@@ -334,7 +331,7 @@ export function AssistantPanel({
           <button
             onClick={() => void send()}
             disabled={busy || (!draft.trim() && !mentions.length)}
-            className="fb-btn-primary rounded-full px-3 py-1 text-[12px] font-medium disabled:opacity-40"
+            className="kun-btn-primary rounded-full px-3 py-1 text-[12px] font-medium disabled:opacity-40"
           >
             {busy ? "Working…" : "Send"}
           </button>

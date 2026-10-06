@@ -49,7 +49,7 @@ export function PublishTemplate({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-      <div className="fb-pop w-full max-w-md rounded-2xl border border-line2 bg-card p-5 shadow-2xl">
+      <div className="kun-pop w-full max-w-md rounded-2xl border border-line2 bg-card p-5 shadow-2xl">
         <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-faint">
           Templates
         </p>
@@ -98,7 +98,7 @@ export function PublishTemplate({
             type="button"
             onClick={() => void publish()}
             disabled={busy}
-            className="fb-btn-primary rounded-full px-4 py-1.5 text-[13px] font-medium disabled:opacity-50"
+            className="kun-btn-primary rounded-full px-4 py-1.5 text-[13px] font-medium disabled:opacity-50"
           >
             {busy ? "Publishing…" : "Publish"}
           </button>

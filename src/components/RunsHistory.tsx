@@ -100,8 +100,8 @@ export function RunsHistory() {
   }, [books]);
 
   return (
-    <div className="fb-atmosphere relative flex min-h-dvh flex-col">
-      <div className="fb-grain" aria-hidden />
+    <div className="kun-atmosphere relative flex min-h-dvh flex-col">
+      <div className="kun-grain" aria-hidden />
       <AppHeader
         active="runs"
         onSettings={() => settings.setShowSettings(true)}
@@ -276,10 +276,8 @@ export function RunsHistory() {
 
       {(settings.showSettings || settings.needsOnboard) && (
         <SettingsModal
-          settings={settings.settings}
           env={settings.env}
           onboarding={settings.needsOnboard && !settings.showSettings}
-          onSave={settings.persist}
           onClose={settings.dismissOnboard}
         />
       )}

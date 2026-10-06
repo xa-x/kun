@@ -1,8 +1,8 @@
 import { eq } from "drizzle-orm";
-import type { GraphDoc, NodeOutput, RunEvent, RunSettings, UsageInfo } from "./types";
+import type { GraphDoc, NodeOutput, RunEvent, UsageInfo } from "./types";
 import { runNode, providerFor, modelFor, asError } from "./runners";
 import { nodeDef } from "./nodes";
-import { inertNodeIds } from "./graph";
+import { inertNodeIds, freshSourceIds } from "./graph";
 import { db } from "@/db";
 import { runs, runNodes } from "@/db/schema";
 import { newId } from "./ids";
@@ -22,6 +22,8 @@ const MAX_CONCURRENCY = 4;
  *
  * `only` = run a single node (inputs come from `cached` upstream outputs).
  * `from` = run that node and every descendant (other branches keep going).
+ * In both partial modes, input-less source nodes wired into the scope (Text,
+ * Instruction, Skill, uploads) run fresh instead of serving cached output.
  */
 export async function* executeGraph(
   graph: GraphDoc,
@@ -32,7 +34,6 @@ export async function* executeGraph(
     only?: string;
     from?: string;
     cached?: Record<string, NodeOutput[]>;
-    settings?: RunSettings;
     signal?: AbortSignal;
   } = {},
 ): AsyncGenerator<RunEvent> {
@@ -239,6 +240,12 @@ export async function* executeGraph(
         ? new Set(downstreamIds(opts.from, edges))
         : null;
 
+    // A from/only run must not read a Text/Instruction/Upload node through a
+    // missing or stale cached output — those nodes are free, so run them
+    // fresh alongside the requested scope.
+    if (scope)
+      for (const id of freshSourceIds(graph.nodes, edges, scope)) scope.add(id);
+
     // Never spend a generation on a node nobody reads from. Running a single
     // node is explicit intent, so that node is always allowed.
     const inert = opts.only ? new Set<string>() : inertNodeIds(graph.nodes, edges);
@@ -281,7 +288,6 @@ export async function* executeGraph(
       await persistNode(nodeId, "running", undefined, undefined, started, node.data);
       try {
         const result = await runNode(nodeId, node.data, gatherInputs(nodeId), {
-          settings: opts.settings,
           emit,
           nodeId,
           orgId,

@@ -1,18 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { envProviderFlags } from "@/lib/providers";
-import { ensureActor } from "@/lib/auth";
-import { loadOrgSettings, publicProviderFlags } from "@/lib/vault";
+import { resolveActor } from "@/lib/auth";
 import { planOf } from "@/lib/billing";
 
 export const runtime = "nodejs";
 
+/** Public-safe: provider flags don't need an account; plan/theme do. */
 export async function GET(req: NextRequest) {
-  const actor = await ensureActor(req);
-  const vault = await loadOrgSettings(actor.org.id);
+  const actor = await resolveActor(req).catch(() => null);
   return NextResponse.json({
     envProviders: envProviderFlags(),
-    vault: publicProviderFlags(vault),
-    plan: planOf(actor.org.plan),
-    theme: actor.user.theme,
+    ...(actor
+      ? { plan: planOf(actor.org.plan), theme: actor.user.theme }
+      : { plan: planOf(null) }),
   });
 }

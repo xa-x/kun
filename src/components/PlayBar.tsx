@@ -117,7 +117,7 @@ export function PlayBar({
         {menu && (
           <>
             <div className="fixed inset-0 z-30" onClick={() => setMenu(false)} />
-            <div className="fb-pop absolute left-0 top-full z-40 mt-1.5 w-64 overflow-hidden rounded-xl border border-line2 bg-card shadow-2xl">
+            <div className="kun-pop absolute left-0 top-full z-40 mt-1.5 w-64 overflow-hidden rounded-xl border border-line2 bg-card shadow-2xl">
               <div className="border-b border-line bg-sunken px-3 pb-1.5 pt-2 font-mono text-[11px] uppercase tracking-[0.16em] text-muted">
                 Workbooks
               </div>
@@ -259,7 +259,7 @@ export function PlayBar({
             onClick={onStop}
             className="flex items-center gap-2 rounded-full border border-live/40 bg-live/10 px-4 py-1.5 text-[12px] font-medium text-live transition-all hover:bg-live/15"
           >
-            <span className="fb-eq" aria-hidden>
+            <span className="kun-eq" aria-hidden>
               <span />
               <span />
               <span />
@@ -269,7 +269,7 @@ export function PlayBar({
         ) : (
           <button
             onClick={onRun}
-            className="fb-btn-primary flex items-center gap-2 rounded-full px-4 py-1.5 text-[12px] font-medium transition-all hover:brightness-110 active:scale-[0.98]"
+            className="kun-btn-primary flex items-center gap-2 rounded-full px-4 py-1.5 text-[12px] font-medium transition-all hover:brightness-110 active:scale-[0.98]"
           >
             <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden>
               <path d="M1.5 0.8 8.5 5 1.5 9.2Z" fill="currentColor" />
@@ -279,7 +279,7 @@ export function PlayBar({
         )}
       </div>
 
-      {running && <span className="fb-progress" aria-hidden />}
+      {running && <span className="kun-progress" aria-hidden />}
     </header>
   );
 }

@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     const body = await req.json().catch(() => ({}));
-    const raw = `fb_${newToken(24)}`;
+    const raw = `kun_${newToken(24)}`;
     const [row] = await db
       .insert(apiKeys)
       .values({

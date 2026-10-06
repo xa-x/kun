@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inertNodeIds } from "./graph";
+import { inertNodeIds, freshSourceIds } from "./graph";
 
 type N = { id: string; data: { kind: string } };
 type E = {
@@ -81,5 +81,43 @@ describe("inertNodeIds", () => {
       [wire("ai", "o"), wire("ai", "dead", "out", "text")],
     );
     expect([...inert]).toEqual(["dead"]);
+  });
+});
+
+describe("freshSourceIds", () => {
+  it("pulls an upstream Text node into a partial-run scope", () => {
+    const fresh = freshSourceIds(
+      [node("t", "text"), node("ai", "llm"), node("o", "out.text")],
+      [wire("t", "ai"), wire("ai", "o")],
+      new Set(["ai", "o"]),
+    );
+    expect([...fresh]).toEqual(["t"]);
+  });
+
+  it("includes uploads and skill nodes, not nodes with inputs", () => {
+    const fresh = freshSourceIds(
+      [node("img", "image.in"), node("ai", "image.gen")],
+      [wire("img", "ai", "out", "image")],
+      new Set(["ai"]),
+    );
+    expect([...fresh]).toEqual(["img"]);
+  });
+
+  it("leaves upstream AI nodes on the cached path", () => {
+    const fresh = freshSourceIds(
+      [node("t", "text"), node("ai1", "llm"), node("ai2", "llm")],
+      [wire("t", "ai1"), wire("ai1", "ai2")],
+      new Set(["ai2"]),
+    );
+    expect(fresh.size).toBe(0);
+  });
+
+  it("does not re-add sources already inside the scope", () => {
+    const fresh = freshSourceIds(
+      [node("t", "text"), node("ai", "llm")],
+      [wire("t", "ai")],
+      new Set(["t", "ai"]),
+    );
+    expect(fresh.size).toBe(0);
   });
 });

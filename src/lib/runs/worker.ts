@@ -3,11 +3,10 @@ import { db } from "@/db";
 import { runs } from "@/db/schema";
 import { executeGraph } from "../engine";
 import { claimNextJob, finishJob } from "../jobs";
-import { loadOrgSettings } from "../vault";
 import { tickSchedules } from "../cron";
 import type { GraphDoc, NodeOutput } from "../types";
 
-const g = globalThis as unknown as { __flowbookJobs?: boolean };
+const g = globalThis as unknown as { __kunJobs?: boolean };
 
 async function processRunJob(runId: string, orgId: string) {
   const [run] = await db.select().from(runs).where(eq(runs.id, runId)).limit(1);
@@ -18,7 +17,6 @@ async function processRunJob(runId: string, orgId: string) {
     only?: string;
     cached?: Record<string, NodeOutput[]>;
   };
-  const settings = await loadOrgSettings(orgId);
   await db
     .update(runs)
     .set({ status: "running", heartbeatAt: new Date() })
@@ -43,7 +41,6 @@ async function processRunJob(runId: string, orgId: string) {
       only: input.only,
       from: input.from,
       cached: input.cached,
-      settings,
       signal: ac.signal,
     })) {
       if (ev.type === "run" && ev.status === "cancelled") break;
@@ -86,8 +83,8 @@ export async function tickJobs() {
 }
 
 export function ensureJobLoop() {
-  if (g.__flowbookJobs) return;
-  g.__flowbookJobs = true;
+  if (g.__kunJobs) return;
+  g.__kunJobs = true;
   setInterval(() => {
     void tickJobs();
   }, 2500);

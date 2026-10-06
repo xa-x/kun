@@ -5,4 +5,4 @@ export function resolveTheme(pref: ThemePref, systemDark = true): "light" | "dar
   return pref;
 }
 
-export const THEME_KEY = "flowbook.theme";
+export const THEME_KEY = "kun.theme";

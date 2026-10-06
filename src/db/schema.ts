@@ -1,45 +1,40 @@
-import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { pgTable, text, integer, boolean, timestamp, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
-const now = sql`(unixepoch() * 1000)`;
+const now = sql`now()`;
 
-export const users = sqliteTable("users", {
-  id: text("id").primaryKey(),
-  email: text("email").notNull(),
-  passwordHash: text("password_hash").notNull(),
-  name: text("name").notNull().default("Owner"),
-  theme: text("theme").notNull().default("system"), // light|dark|system
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
-});
-
-export const sessions = sqliteTable(
-  "sessions",
+/**
+ * Users are provisioned from Supabase Auth: `id` is the auth.users UUID.
+ * The legacy SQLite `password_hash` column is gone — Supabase owns secrets.
+ */
+export const users = pgTable(
+  "users",
   {
     id: text("id").primaryKey(),
-    userId: text("user_id").notNull(),
-    tokenHash: text("token_hash").notNull(),
-    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+    email: text("email").notNull(),
+    name: text("name").notNull().default("Owner"),
+    theme: text("theme").notNull().default("system"), // light|dark|system
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
   },
-  (t) => [index("sessions_token_idx").on(t.tokenHash), index("sessions_user_idx").on(t.userId)],
+  (t) => [uniqueIndex("users_email_idx").on(t.email)],
 );
 
-export const organizations = sqliteTable("organizations", {
+export const organizations = pgTable("organizations", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   slug: text("slug").notNull(),
   plan: text("plan").notNull().default("free"), // free|pro|team
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
 });
 
-export const memberships = sqliteTable(
+export const memberships = pgTable(
   "memberships",
   {
     id: text("id").primaryKey(),
     orgId: text("org_id").notNull(),
     userId: text("user_id").notNull(),
     role: text("role").notNull().default("owner"), // owner|admin|editor|viewer
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
   },
   (t) => [
     uniqueIndex("memberships_org_user_idx").on(t.orgId, t.userId),
@@ -51,19 +46,19 @@ export const memberships = sqliteTable(
  * One row per workbook (a canvas of nodes/edges).
  * `graph` stores the full React Flow document: { nodes, edges, viewport }.
  */
-export const graphs = sqliteTable(
+export const graphs = pgTable(
   "graphs",
   {
     id: text("id").primaryKey(),
     orgId: text("org_id").notNull().default(""),
     ownerId: text("owner_id"),
     title: text("title").notNull().default("Untitled"),
-    graph: text("graph", { mode: "json" }).notNull().default(sql`'{}'`),
-    publishedGraph: text("published_graph", { mode: "json" }),
+    graph: jsonb("graph").notNull().default(sql`'{}'::jsonb`),
+    publishedGraph: jsonb("published_graph"),
     version: integer("version").notNull().default(1),
     visibility: text("visibility").notNull().default("private"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().default(now),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(now),
   },
   (t) => [index("graphs_org_idx").on(t.orgId, t.updatedAt)],
 );
@@ -71,7 +66,7 @@ export const graphs = sqliteTable(
 /**
  * One row per graph execution (whole canvas or single node).
  */
-export const runs = sqliteTable(
+export const runs = pgTable(
   "runs",
   {
     id: text("id").primaryKey(),
@@ -80,18 +75,18 @@ export const runs = sqliteTable(
     status: text("status").notNull().default("queued"),
     trigger: text("trigger").notNull().default("manual"),
     only: text("only"),
-    snapshot: text("snapshot", { mode: "json" }),
-    input: text("input", { mode: "json" }),
+    snapshot: jsonb("snapshot"),
+    input: jsonb("input"),
     idempotencyKey: text("idempotency_key"),
-    cancelRequested: integer("cancel_requested").notNull().default(0),
-    heartbeatAt: integer("heartbeat_at", { mode: "timestamp_ms" }),
+    cancelRequested: boolean("cancel_requested").notNull().default(false),
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }),
     totalCostUsd: integer("total_cost_usd").notNull().default(0),
     totalTokens: integer("total_tokens").notNull().default(0),
     durationMs: integer("duration_ms"),
     error: text("error"),
-    startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull().default(now),
-    finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().default(now),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
   },
   (t) => [
     index("runs_graph_idx").on(t.graphId, t.startedAt),
@@ -100,7 +95,7 @@ export const runs = sqliteTable(
   ],
 );
 
-export const runNodes = sqliteTable(
+export const runNodes = pgTable(
   "run_nodes",
   {
     id: text("id").primaryKey(),
@@ -109,7 +104,7 @@ export const runNodes = sqliteTable(
     graphId: text("graph_id").notNull(),
     nodeId: text("node_id").notNull(),
     status: text("status").notNull().default("idle"),
-    output: text("output", { mode: "json" }),
+    output: jsonb("output"),
     error: text("error"),
     model: text("model"),
     provider: text("provider"),
@@ -117,9 +112,9 @@ export const runNodes = sqliteTable(
     tokensIn: integer("tokens_in").notNull().default(0),
     tokensOut: integer("tokens_out").notNull().default(0),
     durationMs: integer("duration_ms"),
-    startedAt: integer("started_at", { mode: "timestamp_ms" }),
-    finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
   },
   (t) => [
     index("run_nodes_run_idx").on(t.runId),
@@ -127,7 +122,7 @@ export const runNodes = sqliteTable(
   ],
 );
 
-export const runEvents = sqliteTable(
+export const runEvents = pgTable(
   "run_events",
   {
     id: text("id").primaryKey(),
@@ -137,13 +132,13 @@ export const runEvents = sqliteTable(
     type: text("type").notNull(),
     level: text("level").notNull().default("info"),
     nodeId: text("node_id"),
-    payload: text("payload", { mode: "json" }),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+    payload: jsonb("payload"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
   },
   (t) => [index("run_events_run_idx").on(t.runId, t.seq)],
 );
 
-export const artifacts = sqliteTable(
+export const artifacts = pgTable(
   "artifacts",
   {
     id: text("id").primaryKey(),
@@ -153,12 +148,12 @@ export const artifacts = sqliteTable(
     mimeType: text("mime_type").notNull(),
     bytes: integer("bytes").notNull(),
     filename: text("filename").notNull(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
   },
   (t) => [index("artifacts_run_idx").on(t.runId), index("artifacts_org_idx").on(t.orgId)],
 );
 
-export const credentials = sqliteTable(
+export const credentials = pgTable(
   "credentials",
   {
     id: text("id").primaryKey(),
@@ -166,27 +161,27 @@ export const credentials = sqliteTable(
     provider: text("provider").notNull(),
     ciphertext: text("ciphertext").notNull(),
     iv: text("iv").notNull(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().default(now),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(now),
   },
   (t) => [uniqueIndex("credentials_org_provider_idx").on(t.orgId, t.provider)],
 );
 
-export const workbookVersions = sqliteTable(
+export const workbookVersions = pgTable(
   "workbook_versions",
   {
     id: text("id").primaryKey(),
     orgId: text("org_id").notNull(),
     graphId: text("graph_id").notNull(),
     label: text("label").notNull().default("snapshot"),
-    graph: text("graph", { mode: "json" }).notNull(),
+    graph: jsonb("graph").notNull(),
     createdBy: text("created_by"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
   },
   (t) => [index("versions_graph_idx").on(t.graphId, t.createdAt)],
 );
 
-export const shares = sqliteTable(
+export const shares = pgTable(
   "shares",
   {
     id: text("id").primaryKey(),
@@ -194,13 +189,13 @@ export const shares = sqliteTable(
     graphId: text("graph_id").notNull(),
     token: text("token").notNull(),
     permission: text("permission").notNull().default("view"),
-    expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
   },
   (t) => [uniqueIndex("shares_token_idx").on(t.token), index("shares_graph_idx").on(t.graphId)],
 );
 
-export const schedules = sqliteTable(
+export const schedules = pgTable(
   "schedules",
   {
     id: text("id").primaryKey(),
@@ -208,16 +203,16 @@ export const schedules = sqliteTable(
     graphId: text("graph_id").notNull(),
     cronExpr: text("cron_expr").notNull(),
     timezone: text("timezone").notNull().default("UTC"),
-    enabled: integer("enabled").notNull().default(1),
-    inputs: text("inputs", { mode: "json" }),
-    lastRunAt: integer("last_run_at", { mode: "timestamp_ms" }),
-    nextRunAt: integer("next_run_at", { mode: "timestamp_ms" }),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+    enabled: boolean("enabled").notNull().default(true),
+    inputs: jsonb("inputs"),
+    lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+    nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
   },
   (t) => [index("schedules_next_idx").on(t.enabled, t.nextRunAt)],
 );
 
-export const webhookEndpoints = sqliteTable(
+export const webhookEndpoints = pgTable(
   "webhook_endpoints",
   {
     id: text("id").primaryKey(),
@@ -225,13 +220,13 @@ export const webhookEndpoints = sqliteTable(
     graphId: text("graph_id").notNull(),
     token: text("token").notNull(),
     secret: text("secret").notNull(),
-    enabled: integer("enabled").notNull().default(1),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
   },
   (t) => [uniqueIndex("webhooks_token_idx").on(t.token)],
 );
 
-export const apiKeys = sqliteTable(
+export const apiKeys = pgTable(
   "api_keys",
   {
     id: text("id").primaryKey(),
@@ -241,31 +236,31 @@ export const apiKeys = sqliteTable(
     tokenHash: text("token_hash").notNull(),
     prefix: text("prefix").notNull(),
     scopes: text("scopes").notNull().default("run,read"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
-    lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
   },
   (t) => [uniqueIndex("api_keys_hash_idx").on(t.tokenHash)],
 );
 
-export const jobs = sqliteTable(
+export const jobs = pgTable(
   "jobs",
   {
     id: text("id").primaryKey(),
     orgId: text("org_id").notNull(),
     kind: text("kind").notNull(),
-    payload: text("payload", { mode: "json" }).notNull(),
+    payload: jsonb("payload").notNull(),
     status: text("status").notNull().default("queued"),
-    runAt: integer("run_at", { mode: "timestamp_ms" }).notNull().default(now),
+    runAt: timestamp("run_at", { withTimezone: true }).notNull().default(now),
     attempts: integer("attempts").notNull().default(0),
     lastError: text("last_error"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
-    startedAt: integer("started_at", { mode: "timestamp_ms" }),
-    finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
   },
   (t) => [index("jobs_status_idx").on(t.status, t.runAt)],
 );
 
-export const skills = sqliteTable(
+export const skills = pgTable(
   "skills",
   {
     id: text("id").primaryKey(),
@@ -278,8 +273,8 @@ export const skills = sqliteTable(
     body: text("body").notNull(),
     installs: integer("installs").notNull().default(0),
     createdBy: text("created_by"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().default(now),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(now),
   },
   (t) => [
     uniqueIndex("skills_org_slug_idx").on(t.orgId, t.slug),
@@ -287,7 +282,7 @@ export const skills = sqliteTable(
   ],
 );
 
-export const templates = sqliteTable(
+export const templates = pgTable(
   "templates",
   {
     id: text("id").primaryKey(),
@@ -296,13 +291,13 @@ export const templates = sqliteTable(
     slug: text("slug").notNull(),
     title: text("title").notNull(),
     description: text("description").notNull().default(""),
-    tags: text("tags", { mode: "json" }).notNull().default(sql`'[]'`),
-    workbook: text("workbook", { mode: "json" }).notNull(),
+    tags: jsonb("tags").notNull().default(sql`'[]'::jsonb`),
+    workbook: jsonb("workbook").notNull(),
     cloneCount: integer("clone_count").notNull().default(0),
-    featured: integer("featured").notNull().default(0),
+    featured: boolean("featured").notNull().default(false),
     publishedBy: text("published_by"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull().default(now),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(now),
   },
   (t) => [
     uniqueIndex("templates_slug_idx").on(t.slug),
@@ -310,7 +305,7 @@ export const templates = sqliteTable(
   ],
 );
 
-export const usageLedger = sqliteTable(
+export const usageLedger = pgTable(
   "usage_ledger",
   {
     id: text("id").primaryKey(),
@@ -321,10 +316,23 @@ export const usageLedger = sqliteTable(
     tokens: integer("tokens").notNull().default(0),
     model: text("model"),
     provider: text("provider"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull().default(now),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
   },
   (t) => [index("usage_org_idx").on(t.orgId, t.createdAt)],
 );
+
+/** Admin-controlled model policy: enablement, price override, margin. */
+export const modelPolicy = pgTable("model_policy", {
+  model: text("model").primaryKey(),
+  enabled: boolean("enabled").notNull().default(true),
+  /** Micro-USD price override (null = provider-reported cost). */
+  pricePerUsd: integer("price_per_usd"),
+  /** Markup percentage billed on top of the cost basis. */
+  marginPct: integer("margin_pct").notNull().default(0),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(now),
+});
+
+export type ModelPolicyRow = typeof modelPolicy.$inferSelect;
 
 export type GraphRow = typeof graphs.$inferSelect;
 export type RunRow = typeof runs.$inferSelect;

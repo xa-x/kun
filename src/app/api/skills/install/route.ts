@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fail, requireActor } from "@/lib/auth";
 import { canEdit } from "@/lib/tenant";
-import { fetchSkillMd, parseAndResolve, upsertSkill } from "@/lib/skills";
+import { fetchSkillMd, installRefSkills, parseAndResolve, upsertSkill } from "@/lib/skills";
 
 export const runtime = "nodejs";
 
@@ -12,6 +12,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     const body = await req.json().catch(() => ({}));
+
+    // Pull from a pasted GitHub ref: repo, folder, or SKILL.md URL.
+    if (typeof body.ref === "string" && body.ref.trim()) {
+      const skills = await installRefSkills(
+        actor.org.id,
+        actor.user.id,
+        body.ref,
+      );
+      return NextResponse.json(
+        { skill: skills[0], skills },
+        { status: 201 },
+      );
+    }
+
     const source = typeof body.source === "string" ? body.source : "";
     const skillId = typeof body.skillId === "string" ? body.skillId : "";
     const registryId = typeof body.id === "string" ? body.id : `${source}/${skillId}`;
@@ -32,7 +46,7 @@ export async function POST(req: NextRequest) {
       registryId,
       installs,
     });
-    return NextResponse.json({ skill }, { status: 201 });
+    return NextResponse.json({ skill, skills: [skill] }, { status: 201 });
   } catch (e) {
     return fail(e);
   }

@@ -10,7 +10,7 @@ export function toast(
   action?: { label: string; onClick: () => void },
 ) {
   window.dispatchEvent(
-    new CustomEvent("flowbook:toast", { detail: { message, kind, action } }),
+    new CustomEvent("kun:toast", { detail: { message, kind, action } }),
   );
 }
 
@@ -38,18 +38,22 @@ export function ToastHost() {
         setItems((xs) => xs.filter((t) => t.id !== id));
       }, 4200);
     };
-    window.addEventListener("flowbook:toast", onToast);
-    return () => window.removeEventListener("flowbook:toast", onToast);
+    window.addEventListener("kun:toast", onToast);
+    return () => window.removeEventListener("kun:toast", onToast);
   }, []);
 
-  if (!items.length) return null;
-
+  // Always mounted so screen readers catch the first announcement — a live
+  // region inserted with its content is often not announced at all.
   return (
-    <div className="pointer-events-none fixed bottom-4 right-4 z-[90] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2">
+    <div
+      role="status"
+      aria-live="polite"
+      className="pointer-events-none fixed bottom-4 right-4 z-[90] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2"
+    >
       {items.map((t) => (
         <div
           key={t.id}
-          className={`fb-pop pointer-events-auto rounded-xl border px-3 py-2.5 text-[12.5px] leading-snug shadow-2xl backdrop-blur ${
+          className={`kun-pop pointer-events-auto rounded-xl border px-3 py-2.5 text-[12.5px] leading-snug shadow-2xl backdrop-blur ${
             t.kind === "error"
               ? "border-err/40 bg-card/95 text-err"
               : t.kind === "ok"

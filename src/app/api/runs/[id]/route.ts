@@ -40,7 +40,7 @@ export async function PATCH(
       await db
         .update(runs)
         .set({
-          cancelRequested: 1,
+          cancelRequested: true,
           status: run.status === "queued" ? "cancelled" : run.status,
         })
         .where(eq(runs.id, id));

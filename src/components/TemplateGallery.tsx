@@ -5,9 +5,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ago } from "@/lib/format";
 import { readJson } from "@/lib/http";
-import { useSettings } from "@/lib/use-settings";
-import { AppHeader } from "./AppHeader";
-import { SettingsModal } from "./SettingsModal";
 import { toast } from "./Toast";
 
 export interface TemplateMeta {
@@ -23,7 +20,6 @@ export interface TemplateMeta {
 
 export function TemplateGallery() {
   const router = useRouter();
-  const settings = useSettings();
   const [items, setItems] = useState<TemplateMeta[] | null>(null);
   const [q, setQ] = useState("");
   const [cloning, setCloning] = useState<string | null>(null);
@@ -63,12 +59,7 @@ export function TemplateGallery() {
   };
 
   return (
-    <div className="fb-atmosphere relative flex min-h-dvh flex-col">
-      <div className="fb-grain" aria-hidden />
-      <AppHeader
-        active="templates"
-        onSettings={() => settings.setShowSettings(true)}
-      />
+    <>
       <main className="relative z-10 mx-auto w-full max-w-5xl flex-1 px-5 py-10">
         <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
           <div>
@@ -136,7 +127,7 @@ export function TemplateGallery() {
                       type="button"
                       onClick={() => void clone(t.slug)}
                       disabled={!!cloning}
-                      className="fb-btn-primary rounded-full px-3 py-1 text-[12px] font-medium disabled:opacity-50"
+                      className="kun-btn-primary rounded-full px-3 py-1 text-[12px] font-medium disabled:opacity-50"
                     >
                       {cloning === t.slug ? "Cloning…" : "Use"}
                     </button>
@@ -147,15 +138,6 @@ export function TemplateGallery() {
           </ul>
         )}
       </main>
-      {(settings.showSettings || settings.needsOnboard) && (
-        <SettingsModal
-          settings={settings.settings}
-          env={settings.env}
-          onboarding={settings.needsOnboard && !settings.showSettings}
-          onSave={settings.persist}
-          onClose={settings.dismissOnboard}
-        />
-      )}
-    </div>
+    </>
   );
 }
