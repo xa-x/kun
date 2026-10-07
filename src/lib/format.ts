@@ -51,4 +51,14 @@ export function ago(t?: string | number) {
   return rtf.format(-Math.floor(s / 86400), "day");
 }
 
+/** Relative time for a moment in the future, e.g. "in 5 hr." */
+export function until(t?: string | number | null) {
+  if (!t) return "";
+  const s = (new Date(t).getTime() - Date.now()) / 1000;
+  if (s <= 60) return "any moment now";
+  if (s < 3600) return rtf.format(Math.round(s / 60), "minute");
+  if (s < 86400) return rtf.format(Math.round(s / 3600), "hour");
+  return rtf.format(Math.round(s / 86400), "day");
+}
+
 export { GENERIC_VOICES as TTS_VOICES } from "./media-params";

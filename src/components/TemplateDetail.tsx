@@ -3,9 +3,12 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ArrowLeft } from "@phosphor-icons/react";
 import { NODE_TYPES } from "@/lib/nodes";
 import { readJson } from "@/lib/http";
+import { signInHref } from "@/lib/routes";
 import { toast } from "./Toast";
+import { BookCover } from "./workbooks/BookCover";
 import type { TemplateMeta } from "./TemplateGallery";
 import type { PortableWorkbook } from "@/lib/portable";
 
@@ -43,9 +46,9 @@ export function TemplateDetail({ slug }: { slug: string }) {
         method: "POST",
       });
       if (res.status === 401) {
-        // Cloning creates a workbook — send signed-out visitors through
+        // Cloning creates a workbook, so send signed-out visitors through
         // sign-in and bring them back to this template.
-        router.push(`/sign-in?next=${encodeURIComponent(`/templates/${slug}`)}`);
+        router.push(signInHref(`/templates/${slug}`));
         return;
       }
       const j = await readJson<{ graph?: { id: string }; error?: string }>(res);
@@ -59,59 +62,92 @@ export function TemplateDetail({ slug }: { slug: string }) {
 
   const kinds = (item?.workbook?.nodes ?? []).map((n) => n.data.kind);
   const unique = [...new Set(kinds)];
+  const counts = unique.map((k) => ({
+    label: NODE_TYPES.find((d) => d.type === k)?.label ?? k,
+    n: kinds.filter((x) => x === k).length,
+  }));
 
   return (
-    <>
-      <main className="relative z-10 mx-auto w-full max-w-2xl flex-1 px-5 py-10">
-        {item === undefined && (
-          <div className="h-48 animate-pulse rounded-2xl border border-line bg-card/60" />
-        )}
-        {item === null && (
-          <div className="rounded-2xl border border-dashed border-line2 px-6 py-16 text-center">
-            <p className="text-[15px] font-medium text-ink">Template not found</p>
-            <Link href="/templates" className="mt-3 inline-block text-[13px] text-muted">
-              Back to gallery
-            </Link>
-          </div>
-        )}
-        {item && (
-          <>
-            <Link
-              href="/templates"
-              className="font-mono text-[10px] uppercase tracking-[0.16em] text-faint hover:text-ink"
-            >
-              Templates
-            </Link>
-            <h1 className="mt-3 text-[28px] font-semibold tracking-tight text-ink">
+    <div className="mx-auto w-full max-w-5xl px-5 py-10 md:px-10 md:py-12">
+      <Link
+        href="/templates"
+        className="inline-flex items-center gap-1.5 text-[13px] text-muted transition-colors hover:text-ink"
+      >
+        <ArrowLeft size={13} weight="bold" aria-hidden />
+        All templates
+      </Link>
+
+      {item === undefined && <div className="kun-skeleton mt-8 h-72" />}
+
+      {item === null && (
+        <div className="mt-8 rounded-2xl border border-dashed border-line2 px-6 py-16 text-center">
+          <p className="text-[16px] font-medium text-ink">Template not found</p>
+          <p className="mt-1 text-[13.5px] text-muted">
+            It may have been unpublished.
+          </p>
+        </div>
+      )}
+
+      {item && (
+        <div className="mt-8 grid gap-10 md:grid-cols-[minmax(0,1fr)_340px]">
+          <div>
+            <h1 className="text-[34px] font-semibold leading-[1.1] tracking-tight text-ink">
               {item.title}
             </h1>
-            <p className="mt-2 text-[14px] leading-relaxed text-muted">
+            <p className="mt-4 max-w-xl text-[15px] leading-relaxed text-muted">
               {item.description || "No description."}
             </p>
             {item.tags.length > 0 && (
-              <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.12em] text-faint">
-                {item.tags.join(" · ")}
-              </p>
+              <ul className="mt-5 flex flex-wrap gap-1.5">
+                {item.tags.map((tag) => (
+                  <li
+                    key={tag}
+                    className="rounded-full border border-line px-2.5 py-0.5 text-[12.5px] text-muted"
+                  >
+                    {tag}
+                  </li>
+                ))}
+              </ul>
             )}
-            <p className="mt-4 text-[12px] text-faint">
-              {item.cloneCount} clones
-              {unique.length
-                ? ` · ${unique
-                    .map((k) => NODE_TYPES.find((d) => d.type === k)?.label ?? k)
-                    .join(", ")}`
-                : ""}
-            </p>
             <button
               type="button"
               onClick={() => void clone()}
               disabled={cloning}
-              className="kun-btn-primary mt-6 rounded-full px-4 py-2 text-[13px] font-medium disabled:opacity-50"
+              className="kun-btn-primary mt-8 h-11 rounded-full px-6 text-[14px] font-medium disabled:opacity-60"
             >
               {cloning ? "Cloning…" : "Use this template"}
             </button>
-          </>
-        )}
-      </main>
-    </>
+            <p className="mt-3 text-[12.5px] text-faint">
+              Cloned {item.cloneCount} {item.cloneCount === 1 ? "time" : "times"}.
+              You get a private copy.
+            </p>
+          </div>
+
+          <aside className="rounded-2xl border border-line bg-card/70">
+            <div className="h-[150px] border-b border-line bg-sunken/70 p-4">
+              <BookCover kinds={unique} />
+            </div>
+            <div className="p-5">
+              <h2 className="text-[13.5px] font-medium text-ink">What is inside</h2>
+              {counts.length ? (
+                <ul className="mt-3 space-y-2">
+                  {counts.map((c) => (
+                    <li
+                      key={c.label}
+                      className="flex items-center justify-between text-[13px] text-muted"
+                    >
+                      {c.label}
+                      <span className="font-mono tabular-nums text-ink">{c.n}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-[13px] text-faint">No nodes.</p>
+              )}
+            </div>
+          </aside>
+        </div>
+      )}
+    </div>
   );
 }

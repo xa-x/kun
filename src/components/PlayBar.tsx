@@ -1,10 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Wordmark } from "./Wordmark";
-import { GearIcon } from "./AppHeader";
+import {
+  CaretDown,
+  CaretLeft,
+  ClockCounterClockwise,
+  Export,
+  GearSix,
+  Play,
+  Plus,
+  ShareNetwork,
+  Sparkle,
+  Stop,
+} from "@phosphor-icons/react";
+import { Logomark } from "./Wordmark";
 import { ago } from "@/lib/format";
+import { APP_HOME } from "@/lib/routes";
 
 interface Book {
   id: string;
@@ -28,9 +40,12 @@ export function PlayBar({
   onSettings,
   assistantOpen,
   onAssistant,
+  runsOpen,
+  onRuns,
   onShare,
   onPublish,
   costLabel,
+  readOnly = false,
 }: {
   title: string;
   onTitle: (t: string) => void;
@@ -47,239 +62,253 @@ export function PlayBar({
   onSettings: () => void;
   assistantOpen?: boolean;
   onAssistant?: () => void;
+  runsOpen?: boolean;
+  onRuns?: () => void;
   onShare?: () => void;
   onPublish?: () => void;
   costLabel?: string | null;
+  readOnly?: boolean;
 }) {
   const [menu, setMenu] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menu) return;
+    const onDown = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenu(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMenu(false);
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [menu]);
+
+  const status = running
+    ? "Running"
+    : dirty
+      ? "Unsaved changes"
+      : saved
+        ? `Saved ${saved}`
+        : "Saved";
 
   return (
-    <header className="relative flex h-12 shrink-0 items-center gap-2 border-b border-line bg-card/70 px-3 backdrop-blur-md">
+    <header className="relative z-30 flex h-14 shrink-0 items-center gap-2 border-b border-line bg-canvas/80 px-3 backdrop-blur-xl">
       <Link
-        href="/"
-        title="All workbooks"
-        className="flex h-7 items-center gap-1.5 rounded-md px-1.5 text-faint transition-colors hover:bg-white/5 hover:text-ink"
+        href={readOnly ? "/" : APP_HOME}
+        title={readOnly ? "Kun" : "All workbooks"}
+        className="flex h-9 items-center gap-1 rounded-full pl-1.5 pr-3 text-muted transition-colors hover:bg-ink/6 hover:text-ink"
       >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
-          <path
-            d="M7.5 2.5 3.5 6l4 3.5"
-            stroke="currentColor"
-            strokeWidth="1.3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-        <Wordmark compact />
+        <CaretLeft size={14} weight="bold" aria-hidden />
+        <Logomark />
+        <span className="sr-only">{readOnly ? "Kun" : "All workbooks"}</span>
       </Link>
 
-      <div className="relative">
-        <button
-          onClick={() => setMenu((v) => !v)}
-          disabled={running}
-          title="Workbooks"
-          className="flex h-7 items-center gap-1 rounded-md px-1.5 text-faint transition-colors hover:bg-white/5 hover:text-ink disabled:opacity-40"
-        >
-          <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden>
-            <rect
-              x="1.5"
-              y="2"
-              width="8"
-              height="10"
-              rx="1.4"
-              stroke="currentColor"
-              strokeWidth="1.2"
-            />
-            <path
-              d="M11.5 3.2v8.1"
-              stroke="currentColor"
-              strokeWidth="1.2"
-              strokeLinecap="round"
-            />
-          </svg>
-          <svg
-            width="7"
-            height="7"
-            viewBox="0 0 8 8"
-            aria-hidden
-            className={`transition-transform ${menu ? "rotate-180" : ""}`}
+      <div className="mx-1 h-5 w-px bg-line" aria-hidden />
+
+      <div ref={menuRef} className="relative flex min-w-0 items-center">
+        <input
+          value={title}
+          onChange={(e) => onTitle(e.target.value)}
+          readOnly={readOnly}
+          spellCheck={false}
+          placeholder="Untitled"
+          className="h-9 w-[clamp(120px,22vw,260px)] min-w-0 rounded-full border border-transparent bg-transparent px-3 text-[14px] font-medium text-ink outline-none transition-colors hover:border-line focus:border-line2 focus:bg-sunken"
+          aria-label="Workbook title"
+        />
+        {!readOnly && (
+          <button
+            type="button"
+            onClick={() => setMenu((v) => !v)}
+            disabled={running}
+            aria-haspopup="menu"
+            aria-expanded={menu}
+            aria-label="Switch workbook"
+            title="Switch workbook"
+            className="flex h-9 w-9 items-center justify-center rounded-full text-faint transition-colors hover:bg-ink/6 hover:text-ink disabled:opacity-40"
           >
-            <path
-              d="M1 2.5 4 5.5 7 2.5"
-              stroke="currentColor"
-              strokeWidth="1.3"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              fill="none"
+            <CaretDown
+              size={13}
+              weight="bold"
+              className={`transition-transform ${menu ? "rotate-180" : ""}`}
+              aria-hidden
             />
-          </svg>
-        </button>
+          </button>
+        )}
 
         {menu && (
-          <>
-            <div className="fixed inset-0 z-30" onClick={() => setMenu(false)} />
-            <div className="kun-pop absolute left-0 top-full z-40 mt-1.5 w-64 overflow-hidden rounded-xl border border-line2 bg-card shadow-2xl">
-              <div className="border-b border-line bg-sunken px-3 pb-1.5 pt-2 font-mono text-[11px] uppercase tracking-[0.16em] text-muted">
-                Workbooks
-              </div>
-              <div className="max-h-72 overflow-auto py-1">
-                {books.map((b) => (
-                  <button
-                    key={b.id}
-                    onClick={() => {
-                      setMenu(false);
-                      onOpen(b.id);
-                    }}
-                    className={`flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-white/[0.05] ${
-                      b.id === activeId ? "bg-white/[0.04]" : ""
+          <div
+            role="menu"
+            className="kun-pop absolute left-0 top-full z-40 mt-2 w-72 overflow-hidden rounded-2xl border border-line2 bg-raised shadow-2xl shadow-black/40"
+          >
+            <p className="px-4 pb-1 pt-3 text-[12px] font-medium text-faint">
+              Workbooks
+            </p>
+            <div className="max-h-72 overflow-auto px-1.5 pb-1.5">
+              {books.map((b) => (
+                <button
+                  key={b.id}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenu(false);
+                    onOpen(b.id);
+                  }}
+                  className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left transition-colors hover:bg-ink/5 ${
+                    b.id === activeId ? "bg-ink/[0.07]" : ""
+                  }`}
+                >
+                  <span
+                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                      b.id === activeId ? "bg-ink" : "bg-transparent"
                     }`}
-                  >
-                    <span
-                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                        b.id === activeId ? "bg-accent" : "bg-transparent"
-                      }`}
-                    />
-                    <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink/90">
-                      {b.title || "Untitled"}
-                    </span>
-                    <span className="shrink-0 font-mono text-[9px] uppercase tracking-wide text-faint">
-                      {ago(b.updatedAt)}
-                    </span>
-                  </button>
-                ))}
-                {!books.length && (
-                  <p className="px-3 py-2 text-[11.5px] text-faint">
-                    Nothing saved yet.
-                  </p>
-                )}
-              </div>
-              <button
-                onClick={() => {
-                  setMenu(false);
-                  onNew();
-                }}
-                className="flex w-full items-center gap-2 border-t border-line px-3 py-2 text-left text-[12px] text-muted transition-colors hover:bg-white/[0.05] hover:text-accent"
-              >
-                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-                  <path
-                    d="M5 1v8M1 5h8"
-                    stroke="currentColor"
-                    strokeWidth="1.4"
-                    strokeLinecap="round"
                   />
-                </svg>
-                New workbook
-              </button>
+                  <span className="min-w-0 flex-1 truncate text-[13px] text-ink">
+                    {b.title || "Untitled"}
+                  </span>
+                  <span className="shrink-0 text-[11.5px] text-faint">
+                    {ago(b.updatedAt)}
+                  </span>
+                </button>
+              ))}
+              {!books.length && (
+                <p className="px-2.5 py-3 text-[13px] text-faint">
+                  Nothing saved yet.
+                </p>
+              )}
             </div>
-          </>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setMenu(false);
+                onNew();
+              }}
+              className="flex w-full items-center gap-2.5 border-t border-line px-4 py-3 text-left text-[13px] text-muted transition-colors hover:bg-ink/5 hover:text-ink"
+            >
+              <Plus size={14} weight="bold" aria-hidden />
+              New workbook
+            </button>
+          </div>
         )}
       </div>
 
-      <input
-        value={title}
-        onChange={(e) => onTitle(e.target.value)}
-        spellCheck={false}
-        placeholder="Untitled"
-        className="w-56 rounded-md border border-transparent bg-transparent px-2 py-1 text-[13px] text-ink/90 outline-none transition-colors hover:border-line focus:border-line2 focus:bg-sunken"
-        aria-label="Workbook title"
-      />
-
-      <div className="ml-auto flex items-center gap-3">
+      <div className="ml-auto flex items-center gap-1">
         {costLabel && costLabel !== "—" && (
-          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted" title="Last run cost">
+          <span
+            className="mr-1 hidden font-mono text-[12px] tabular-nums text-muted md:block"
+            title="Cost of the last run"
+          >
             {costLabel}
           </span>
         )}
-        <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-faint">
-          {running
-            ? "Running"
-            : dirty
-              ? "Editing…"
-              : saved
-                ? `Saved ${saved}`
-                : "Saved"}
-        </span>
-        <Link
-          href={activeId ? `/runs?graphId=${activeId}` : "/runs"}
-          title="Run history"
-          className="hidden h-7 items-center rounded-md px-2 font-mono text-[10px] uppercase tracking-[0.14em] text-faint transition-colors hover:bg-white/5 hover:text-ink sm:flex"
+        <span
+          className={`mr-2 hidden text-[12.5px] lg:block ${
+            running ? "text-live" : dirty ? "text-warn" : "text-faint"
+          }`}
+          aria-live="polite"
         >
-          Runs
-        </Link>
-        {onShare && (
+          {status}
+        </span>
+        {dirty && !running && !readOnly && (
           <button
-            onClick={onShare}
-            className="hidden h-7 items-center rounded-md px-2 font-mono text-[10px] uppercase tracking-[0.14em] text-faint transition-colors hover:bg-white/5 hover:text-ink sm:flex"
+            type="button"
+            onClick={onSave}
+            className="kun-btn-secondary mr-1 h-9 rounded-full px-4 text-[13px] font-medium"
           >
-            Share
+            Save
           </button>
+        )}
+
+        {onShare && (
+          <BarButton onClick={onShare} label="Share" icon={<ShareNetwork size={16} aria-hidden />} />
         )}
         {onPublish && (
-          <button
-            onClick={onPublish}
-            className="hidden h-7 items-center rounded-md px-2 font-mono text-[10px] uppercase tracking-[0.14em] text-faint transition-colors hover:bg-white/5 hover:text-ink sm:flex"
-          >
-            Publish
-          </button>
+          <BarButton onClick={onPublish} label="Publish" icon={<Export size={16} aria-hidden />} />
+        )}
+        {onRuns && (
+          <BarButton
+            onClick={onRuns}
+            label="Runs"
+            active={runsOpen}
+            icon={<ClockCounterClockwise size={16} aria-hidden />}
+          />
         )}
         {onAssistant && (
-          <button
+          <BarButton
             onClick={onAssistant}
-            title={assistantOpen ? "Hide assistant" : "Build with AI"}
-            className={`flex h-7 items-center gap-1.5 rounded-md px-2 font-mono text-[10px] uppercase tracking-[0.14em] transition-colors ${
-              assistantOpen
-                ? "bg-white/10 text-ink"
-                : "text-faint hover:bg-white/5 hover:text-ink"
-            }`}
-          >
-            <span
-              className="h-1.5 w-1.5 rounded-full bg-live"
-              aria-hidden
-            />
-            Chat
-          </button>
+            label="Assistant"
+            active={assistantOpen}
+            icon={<Sparkle size={16} weight={assistantOpen ? "fill" : "regular"} aria-hidden />}
+          />
         )}
         <button
+          type="button"
           onClick={onSettings}
           disabled={running}
-          title="Settings — provider keys"
-          className="flex h-7 items-center gap-1.5 rounded-md px-2 font-mono text-[10px] uppercase tracking-[0.14em] text-faint transition-colors hover:bg-white/5 hover:text-ink disabled:opacity-40"
+          title="Settings"
+          aria-label="Settings"
+          className="flex h-9 w-9 items-center justify-center rounded-full text-muted transition-colors hover:bg-ink/6 hover:text-ink disabled:opacity-40"
         >
-          <GearIcon />
-          <span className="hidden sm:inline">Settings</span>
+          <GearSix size={17} aria-hidden />
         </button>
-        <button
-          onClick={onSave}
-          disabled={running}
-          className="rounded-md px-2 py-1 font-mono text-[10px] uppercase tracking-[0.14em] text-muted transition-colors hover:text-ink disabled:opacity-40"
-        >
-          Save
-        </button>
-        {running ? (
-          <button
-            onClick={onStop}
-            className="flex items-center gap-2 rounded-full border border-live/40 bg-live/10 px-4 py-1.5 text-[12px] font-medium text-live transition-all hover:bg-live/15"
-          >
-            <span className="kun-eq" aria-hidden>
-              <span />
-              <span />
-              <span />
-            </span>
-            Stop
-          </button>
-        ) : (
-          <button
-            onClick={onRun}
-            className="kun-btn-primary flex items-center gap-2 rounded-full px-4 py-1.5 text-[12px] font-medium transition-all hover:brightness-110 active:scale-[0.98]"
-          >
-            <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden>
-              <path d="M1.5 0.8 8.5 5 1.5 9.2Z" fill="currentColor" />
-            </svg>
-            Run
-          </button>
-        )}
+
+        <div className="ml-2">
+          {running ? (
+            <button
+              type="button"
+              onClick={onStop}
+              className="flex h-9 items-center gap-2 rounded-full border border-live/50 bg-live/10 px-5 text-[13px] font-medium text-live transition-colors hover:bg-live/15"
+            >
+              <Stop size={12} weight="fill" aria-hidden />
+              Stop
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onRun}
+              className="kun-btn-primary flex h-9 items-center gap-2 rounded-full px-5 text-[13px] font-medium"
+            >
+              <Play size={12} weight="fill" aria-hidden />
+              Run
+            </button>
+          )}
+        </div>
       </div>
 
       {running && <span className="kun-progress" aria-hidden />}
     </header>
+  );
+}
+
+function BarButton({
+  label,
+  icon,
+  onClick,
+  active = false,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+  active?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      title={label}
+      className={`flex h-9 items-center gap-2 rounded-full px-3 text-[13px] transition-colors ${
+        active
+          ? "bg-ink/10 text-ink"
+          : "text-muted hover:bg-ink/6 hover:text-ink"
+      }`}
+    >
+      {icon}
+      <span className="hidden xl:inline">{label}</span>
+      <span className="sr-only xl:hidden">{label}</span>
+    </button>
   );
 }

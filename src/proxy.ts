@@ -1,54 +1,45 @@
 import { NextRequest, NextResponse } from "next/server";
+import { hasSessionCookie } from "@/lib/session-cookie";
+import { signInHref } from "@/lib/routes";
 
 /**
- * Lightweight auth gate (Next 16 proxy convention — middleware is renamed).
- * Checks only for the presence of a Supabase session cookie; actual token
- * validation happens server-side in requireActor() on every API call and in
- * the (app)/(admin) group layouts.
+ * Fast, optimistic gate for workspace routes (Next 16 proxy convention).
  *
- * Public by design (never matched here): /api/*, /templates, /pricing,
- * /s/[token], and everything under /public + /_next.
+ * It only answers "is there a session cookie for this project?" so signed-out
+ * visitors are redirected before anything renders. It never decides that a
+ * visitor is *signed in*: a cookie can be expired or revoked, so the server
+ * layouts validate the session for real (see lib/guard.ts). That split is what
+ * prevents redirect loops. Auth pages and the marketing pages are deliberately
+ * not matched here.
+ *
+ * Public by design: /, /pricing, /templates, /s/[token], /sign-in, /sign-up,
+ * /api/* (route handlers authenticate themselves) and static assets.
  */
-const SB_SESSION = /^sb-.*-auth-token(\.\d+)?$/;
-const AUTH_PAGES = new Set(["/sign-in", "/sign-up"]);
-
-function hasSessionCookie(req: NextRequest) {
-  return req.cookies.getAll().some((c) => SB_SESSION.test(c.name));
-}
-
 export function proxy(req: NextRequest) {
-  const authed = hasSessionCookie(req);
-  const { pathname, search } = req.nextUrl;
+  const url = req.nextUrl.clone();
+  url.searchParams.delete("_rsc");
+  const target = url.pathname + url.search;
 
-  if (AUTH_PAGES.has(pathname)) {
-    if (authed) {
-      const url = req.nextUrl.clone();
-      url.pathname = "/";
-      url.search = "";
-      return NextResponse.redirect(url);
-    }
-    return NextResponse.next();
-  }
-
-  if (!authed) {
-    const url = req.nextUrl.clone();
-    url.pathname = "/sign-in";
-    url.search = `?next=${encodeURIComponent(pathname + search)}`;
+  if (!hasSessionCookie(req.cookies.getAll())) {
+    const [pathname, query] = signInHref(target).split("?");
+    url.pathname = pathname;
+    url.search = query ? `?${query}` : "";
     return NextResponse.redirect(url);
   }
-  return NextResponse.next();
+
+  // Layouts can't read the URL; hand it over so a stale-cookie redirect can
+  // still carry the visitor's destination through sign-in.
+  const headers = new Headers(req.headers);
+  headers.set("x-kun-next", target);
+  return NextResponse.next({ request: { headers } });
 }
 
 export const config = {
-  // Workspace + admin pages only; auth pages are matched to bounce
-  // signed-in users back to the app.
   matcher: [
-    "/",
+    "/workbooks/:path*",
     "/w/:path*",
     "/runs/:path*",
     "/billing/:path*",
     "/admin/:path*",
-    "/sign-in",
-    "/sign-up",
   ],
 };

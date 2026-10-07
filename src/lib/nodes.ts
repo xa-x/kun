@@ -17,7 +17,8 @@ export interface NodeTypeDef {
   label: string;
   description: string;
   category: "input" | "ai" | "output";
-  color: string; // node accent
+  /** CSS colour (a design-token var) tinting the node by the data it outputs. */
+  color: string;
   inputs: PortDef[];
   outputs: PortDef[];
   /** Model selector choices offered in the node UI. */
@@ -30,7 +31,7 @@ export const NODE_TYPES: NodeTypeDef[] = [
     label: "Text",
     description: "Raw text or paste an article",
     category: "input",
-    color: "#8a8a8a",
+    color: "var(--color-t-text)",
     inputs: [],
     outputs: [{ id: "out", label: "Text", type: "text" }],
   },
@@ -39,7 +40,7 @@ export const NODE_TYPES: NodeTypeDef[] = [
     label: "Instruction",
     description: "System-style instruction prepended to prompts",
     category: "input",
-    color: "#6a6a6a",
+    color: "var(--color-t-text)",
     inputs: [],
     outputs: [{ id: "out", label: "Text", type: "text" }],
   },
@@ -49,7 +50,7 @@ export const NODE_TYPES: NodeTypeDef[] = [
     description:
       "Reusable Agent Skill (SKILL.md). Pick one, then wire it into an AI node's text input — or expand it into a Text → Image chain.",
     category: "input",
-    color: "#a78bfa",
+    color: "var(--color-t-text)",
     inputs: [],
     outputs: [{ id: "out", label: "Text", type: "text" }],
   },
@@ -58,7 +59,7 @@ export const NODE_TYPES: NodeTypeDef[] = [
     label: "Image",
     description: "Upload an image",
     category: "input",
-    color: "#8a8a8a",
+    color: "var(--color-t-image)",
     inputs: [],
     outputs: [{ id: "out", label: "Image", type: "image" }],
   },
@@ -69,7 +70,7 @@ export const NODE_TYPES: NodeTypeDef[] = [
     category: "input",
     inputs: [],
     outputs: [{ id: "out", label: "Audio", type: "audio" }],
-    color: "#8a8a8a",
+    color: "var(--color-t-audio)",
   },
   {
     type: "video.in",
@@ -78,14 +79,14 @@ export const NODE_TYPES: NodeTypeDef[] = [
     category: "input",
     inputs: [],
     outputs: [{ id: "out", label: "Video", type: "video" }],
-    color: "#8a8a8a",
+    color: "var(--color-t-video)",
   },
   {
     type: "llm",
     label: "AI Text",
     description: "Chat model: summarize, rewrite, translate…",
     category: "ai",
-    color: "#3b82f6",
+    color: "var(--color-t-text)",
     inputs: [
       { id: "in", label: "Context", type: "text" },
       { id: "image", label: "Image", type: "image" }, // vision
@@ -105,7 +106,7 @@ export const NODE_TYPES: NodeTypeDef[] = [
     description:
       "Generate or edit an image. Connect a reference to keep the subject and change the background. Size and aspect are optional — Auto uses the model default.",
     category: "ai",
-    color: "#22c55e",
+    color: "var(--color-t-image)",
     inputs: [
       { id: "prompt", label: "Prompt", type: "text" },
       { id: "image", label: "Reference", type: "image" },
@@ -124,7 +125,7 @@ export const NODE_TYPES: NodeTypeDef[] = [
     description:
       "Text to speech. Voice is optional — Auto uses the model default; listed voices come from the model when known.",
     category: "ai",
-    color: "#ef4444",
+    color: "var(--color-t-audio)",
     inputs: [{ id: "text", label: "Text", type: "text" }],
     outputs: [{ id: "out", label: "Audio", type: "audio" }],
     models: [
@@ -140,7 +141,7 @@ export const NODE_TYPES: NodeTypeDef[] = [
     description:
       "Text/image to video. Duration, aspect, and resolution are optional — Auto uses the model default.",
     category: "ai",
-    color: "#60a5fa",
+    color: "var(--color-t-video)",
     inputs: [
       { id: "prompt", label: "Prompt", type: "text" },
       { id: "image", label: "First frame", type: "image" },
@@ -159,7 +160,7 @@ export const NODE_TYPES: NodeTypeDef[] = [
     description:
       "Renders whatever arrives — pages & apps live, prose, code, JSON, media",
     category: "output",
-    color: "#e5e5e5",
+    color: "var(--color-t-text)",
     inputs: [{ id: "in", label: "Text", type: "text" }],
     outputs: [{ id: "out", label: "Text", type: "text" }],
   },
@@ -178,7 +179,7 @@ export const NODE_TYPES: NodeTypeDef[] = [
       { id: "audio", label: "Audio", type: "audio" },
       { id: "video", label: "Video", type: "video" },
     ],
-    color: "#a3a3a3",
+    color: "var(--color-muted)",
   },
 ];
 

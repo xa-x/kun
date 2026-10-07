@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { PaperPlaneTilt, Sparkle, X } from "@phosphor-icons/react";
 import { nodeDef } from "@/lib/nodes";
 import {
   applyGraphOps,
@@ -201,44 +202,51 @@ export function AssistantPanel({
   };
 
   return (
-    <aside className="kun-pop absolute inset-y-3 right-3 z-20 flex w-[360px] max-w-[calc(100vw-1.5rem)] flex-col overflow-hidden rounded-xl border border-line bg-card/95 shadow-2xl shadow-black/50 backdrop-blur">
-      <header className="flex items-center justify-between border-b border-line px-3 py-2.5">
-        <div>
-          <p className="font-mono text-[9px] uppercase tracking-[0.18em] text-faint">
-            Assistant
-          </p>
-          <p className="text-[13px] font-medium text-ink">Build with chat</p>
+    <aside
+      aria-label="Assistant"
+      className="kun-pop z-30 flex min-h-0 w-[388px] shrink-0 flex-col border-l border-line bg-card max-md:absolute max-md:inset-0 max-md:w-full max-md:border-l-0"
+    >
+      <header className="flex h-12 shrink-0 items-center justify-between border-b border-line px-4">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-ink/8 text-ink">
+            <Sparkle size={14} weight="fill" aria-hidden />
+          </span>
+          <div>
+            <p className="text-[13.5px] font-medium leading-none text-ink">
+              Assistant
+            </p>
+          </div>
         </div>
         <button
+          type="button"
           onClick={onClose}
           title="Close assistant"
-          className="flex h-6 w-6 items-center justify-center rounded-md text-faint transition-colors hover:bg-white/5 hover:text-ink"
+          aria-label="Close assistant"
+          className="flex h-8 w-8 items-center justify-center rounded-full text-faint transition-colors hover:bg-ink/8 hover:text-ink"
         >
-          <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden>
-            <path
-              d="M1.5 1.5 6.5 6.5M6.5 1.5 1.5 6.5"
-              stroke="currentColor"
-              strokeWidth="1.2"
-              strokeLinecap="round"
-            />
-          </svg>
+          <X size={14} weight="bold" aria-hidden />
         </button>
       </header>
 
-      <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-auto px-3 py-3">
+      <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-auto px-4 py-4">
         {!rows.length && (
-          <div className="rounded-lg border border-dashed border-line px-3 py-4 text-[12.5px] leading-relaxed text-muted">
-            Describe a pipeline and I’ll place the nodes. Type{" "}
-            <span className="font-mono text-ink">@</span> to mention a node and
-            edit it.
+          <div className="rounded-2xl border border-dashed border-line2 px-4 py-5 text-[13px] leading-relaxed text-muted">
+            <p className="font-medium text-ink">Describe a pipeline.</p>
+            <p className="mt-1">
+              I&apos;ll place and wire the nodes. Type{" "}
+              <kbd className="rounded bg-ink/10 px-1.5 py-0.5 font-mono text-[11px] text-ink">
+                @
+              </kbd>{" "}
+              to mention a node and edit it.
+            </p>
           </div>
         )}
         {rows.map((r) => (
           <div
             key={r.id}
-            className={`max-w-[92%] rounded-xl px-3 py-2 text-[12.5px] leading-relaxed ${
+            className={`max-w-[90%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed ${
               r.role === "user"
-                ? "ml-auto bg-white text-[#111]"
+                ? "ml-auto bg-ink text-canvas"
                 : "bg-sunken text-ink"
             }`}
           >
@@ -247,10 +255,10 @@ export function AssistantPanel({
                 {r.mentions.map((m) => (
                   <span
                     key={m.id}
-                    className={`rounded-full px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider ${
+                    className={`rounded-full px-2 py-0.5 text-[11px] ${
                       r.role === "user"
-                        ? "bg-black/10 text-[#111]"
-                        : "bg-white/8 text-muted"
+                        ? "bg-canvas/15 text-canvas"
+                        : "bg-ink/10 text-muted"
                     }`}
                   >
                     @{m.label}
@@ -265,21 +273,22 @@ export function AssistantPanel({
         ))}
       </div>
 
-      <div className="border-t border-line p-2.5">
+      <div className="shrink-0 border-t border-line p-3">
         {mentions.length > 0 && (
-          <div className="mb-2 flex flex-wrap gap-1">
+          <div className="mb-2 flex flex-wrap gap-1.5">
             {mentions.map((m) => (
               <button
                 key={m.id}
+                type="button"
                 onClick={() =>
                   setMentions((xs) => xs.filter((x) => x.id !== m.id))
                 }
-                className="inline-flex items-center gap-1 rounded-full border border-line bg-sunken px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider text-ink"
+                className="inline-flex items-center gap-1.5 rounded-full border border-line bg-sunken px-2.5 py-0.5 text-[11.5px] text-ink hover:border-line2"
                 title="Remove mention"
               >
                 <span
                   className="h-1.5 w-1.5 rounded-full"
-                  style={{ background: nodeDef(m.kind)?.color ?? "#8a8a8a" }}
+                  style={{ background: nodeDef(m.kind)?.color ?? "var(--color-muted)" }}
                 />
                 @{m.label}
               </button>
@@ -288,21 +297,20 @@ export function AssistantPanel({
         )}
         <div className="relative">
           {mentionOpen && candidates.length > 0 && (
-            <div className="absolute inset-x-0 bottom-full z-10 mb-1 overflow-hidden rounded-lg border border-line bg-card shadow-xl">
+            <div className="absolute inset-x-0 bottom-full z-10 mb-1.5 overflow-hidden rounded-xl border border-line2 bg-raised p-1 shadow-2xl shadow-black/40">
               {candidates.map((n) => (
                 <button
                   key={n.id}
+                  type="button"
                   onClick={() => pickMention(n)}
-                  className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left hover:bg-white/[0.05]"
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left hover:bg-ink/5"
                 >
                   <span
                     className="h-1.5 w-1.5 rounded-full"
                     style={{ background: n.color }}
                   />
-                  <span className="truncate text-[12px] text-ink">{n.label}</span>
-                  <span className="ml-auto font-mono text-[9px] uppercase tracking-wider text-faint">
-                    {n.kind}
-                  </span>
+                  <span className="truncate text-[12.5px] text-ink">{n.label}</span>
+                  <span className="ml-auto text-[11px] text-faint">{n.kind}</span>
                 </button>
               ))}
             </div>
@@ -318,22 +326,23 @@ export function AssistantPanel({
               }
               if (e.key === "Escape") setMentionOpen(false);
             }}
-            placeholder="Build a flow…  @ to mention a node"
+            aria-label="Message the assistant"
+            placeholder="Build a flow. Use @ to mention a node."
             rows={3}
             disabled={busy}
-            className="w-full resize-none rounded-lg border border-line bg-sunken px-2.5 py-2 text-[12.5px] leading-relaxed text-ink outline-none placeholder:text-faint focus:border-line2 disabled:opacity-60"
+            className="kun-field resize-none disabled:opacity-60"
           />
         </div>
-        <div className="mt-2 flex items-center justify-between">
-          <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-faint">
-            Enter to send
-          </span>
+        <div className="mt-2.5 flex items-center justify-between">
+          <span className="text-[12px] text-faint">Enter to send</span>
           <button
+            type="button"
             onClick={() => void send()}
             disabled={busy || (!draft.trim() && !mentions.length)}
-            className="kun-btn-primary rounded-full px-3 py-1 text-[12px] font-medium disabled:opacity-40"
+            className="kun-btn-primary inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-[13px] font-medium disabled:opacity-40"
           >
             {busy ? "Working…" : "Send"}
+            {!busy && <PaperPlaneTilt size={13} weight="fill" aria-hidden />}
           </button>
         </div>
       </div>

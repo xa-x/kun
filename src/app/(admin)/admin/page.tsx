@@ -55,12 +55,11 @@ export default function AdminModelsPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-5 py-10">
-      <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-faint">
-        Control
-      </p>
-      <h1 className="mt-1.5 text-[28px] font-semibold tracking-tight text-ink">Models</h1>
-      <p className="mt-1 max-w-xl text-[13.5px] text-muted">
+    <div className="mx-auto w-full max-w-4xl px-5 py-10 md:px-10 md:py-12">
+      <h1 className="text-[28px] font-semibold leading-tight tracking-tight text-ink">
+        Models
+      </h1>
+      <p className="mt-1.5 max-w-xl text-[14px] leading-relaxed text-muted">
         Enablement, price overrides, and margins for every model on this
         instance. Models without a policy are enabled at provider-reported
         cost; billed cost = override (or provider cost) × (1 + margin).
@@ -154,7 +153,7 @@ function PolicyRow({
         className={`rounded-full px-3 py-1 text-[11px] font-medium transition-colors disabled:opacity-50 ${
           row.enabled
             ? "bg-emerald-400/10 text-emerald-300 hover:bg-emerald-400/20"
-            : "bg-white/[0.06] text-faint hover:text-ink"
+            : "bg-ink/[0.06] text-faint hover:text-ink"
         }`}
       >
         {row.enabled ? "Enabled" : "Disabled"}

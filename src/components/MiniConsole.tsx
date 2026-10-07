@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { CaretDown, CaretUp, Terminal } from "@phosphor-icons/react";
 import { fmtUsd } from "@/lib/format";
 
 export interface ConsoleLine {
@@ -33,62 +34,59 @@ export function MiniConsole({
   }, [lines.length, collapsed]);
 
   const cost = fmtUsd(costUsd);
-  const label = runId ? runId.slice(0, 8) : "idle";
 
   return (
-    <div className="flex flex-col overflow-hidden rounded-xl border border-line bg-card/95 font-mono text-[10.5px]">
-      <div className="flex items-center justify-between gap-2 border-b border-line px-2.5 py-1.5 text-[9px] uppercase tracking-[0.16em] text-faint">
-        <span>Console</span>
-        <div className="flex items-center gap-2">
-          {cost !== "—" && <span className="normal-case tracking-normal text-muted">{cost}</span>}
-          <span>{label}</span>
-          {onToggle && (
-            <button
-              onClick={onToggle}
-              title={collapsed ? "Expand console" : "Minimize console"}
-              className="flex h-4 w-4 items-center justify-center rounded text-faint transition-colors hover:bg-white/5 hover:text-ink"
-            >
-              {collapsed ? (
-                <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden>
-                  <path
-                    d="M1.5 5.2 4 2.8 6.5 5.2"
-                    stroke="currentColor"
-                    strokeWidth="1.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    fill="none"
-                  />
-                </svg>
-              ) : (
-                <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden>
-                  <path
-                    d="M1.5 3 4 5.4 6.5 3"
-                    stroke="currentColor"
-                    strokeWidth="1.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    fill="none"
-                  />
-                </svg>
-              )}
-            </button>
+    <div className="flex flex-col overflow-hidden rounded-2xl border border-line2 bg-raised/95 shadow-xl shadow-black/30 backdrop-blur">
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={!onToggle}
+        aria-expanded={!collapsed}
+        className="flex h-9 items-center justify-between gap-2 px-3.5 text-left text-[12px] text-muted transition-colors hover:text-ink"
+      >
+        <span className="flex items-center gap-2 font-medium">
+          <Terminal size={14} weight="bold" aria-hidden />
+          Console
+        </span>
+        <span className="flex items-center gap-2.5">
+          {cost !== "—" && (
+            <span className="font-mono tabular-nums text-ink">{cost}</span>
           )}
-        </div>
-      </div>
+          {runId && (
+            <span className="font-mono text-[11px] text-faint">
+              {runId.slice(0, 8)}
+            </span>
+          )}
+          {collapsed ? (
+            <CaretUp size={12} weight="bold" aria-hidden />
+          ) : (
+            <CaretDown size={12} weight="bold" aria-hidden />
+          )}
+        </span>
+      </button>
       {!collapsed && (
-        <div ref={ref} className="max-h-48 min-h-0 flex-1 overflow-auto px-2.5 py-1.5">
-          {!lines.length && <p className="text-faint">Requests will appear here.</p>}
+        <div
+          ref={ref}
+          className="max-h-44 min-h-0 flex-1 overflow-auto border-t border-line px-3.5 py-2 font-mono text-[11px]"
+        >
+          {!lines.length && (
+            <p className="py-1 text-faint">Run events will stream in here.</p>
+          )}
           {lines.map((l) => (
             <div
               key={`${l.seq}-${l.ts}`}
-              className={`flex gap-2 py-0.5 ${
-                l.level === "error" ? "text-err" : l.status === "running" ? "text-live" : "text-muted"
+              className={`flex gap-2.5 py-0.5 ${
+                l.level === "error"
+                  ? "text-err"
+                  : l.status === "running"
+                    ? "text-live"
+                    : "text-muted"
               }`}
             >
-              <span className="shrink-0 text-faint">
+              <span className="shrink-0 tabular-nums text-faint">
                 {new Date(l.ts).toLocaleTimeString()}
               </span>
-              <span className="shrink-0 uppercase">{l.type}</span>
+              <span className="shrink-0">{l.type}</span>
               <span className="min-w-0 truncate">
                 {l.nodeId ?? ""}
                 {l.status ? ` ${l.status}` : ""}

@@ -3,7 +3,7 @@
 import { readJson } from "./http";
 
 export interface SessionInfo {
-  user: { id: string; email: string } | null;
+  user: { id: string; email: string; name?: string | null } | null;
   platformAdmin?: boolean;
 }
 
@@ -15,4 +15,9 @@ export function fetchSessionInfo(): Promise<SessionInfo> {
     .then((r) => readJson<SessionInfo>(r))
     .catch(() => ({ user: null }) as SessionInfo);
   return sessionPromise;
+}
+
+/** Forget the cached session after signing in or out. */
+export function resetSessionInfo() {
+  sessionPromise = null;
 }

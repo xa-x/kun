@@ -1,17 +1,28 @@
-import { redirect } from "next/navigation";
-import { resolveActor } from "@/lib/auth";
+import { requirePageActor } from "@/lib/guard";
+import { isPlatformAdmin } from "@/lib/admin";
+import { AppShell } from "@/components/shell/AppShell";
 
 /**
- * Workspace routes (/, /w/*, /runs, /billing). The proxy does a cheap
- * cookie-presence check for fast redirects; this layout is the real
- * server-side guard — no valid session, no render.
+ * Workspace routes (/workbooks, /runs, /billing). The proxy only checks that a
+ * session cookie exists so signed-out visitors redirect fast; this layout is
+ * the real guard. No valid session, no render.
  */
 export default async function AppLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const actor = await resolveActor();
-  if (!actor) redirect("/sign-in");
-  return <>{children}</>;
+  const actor = await requirePageActor();
+  return (
+    <AppShell
+      user={{
+        name: actor.user.name,
+        email: actor.user.email,
+        plan: actor.org.plan,
+        isAdmin: isPlatformAdmin(actor.user.email),
+      }}
+    >
+      {children}
+    </AppShell>
+  );
 }

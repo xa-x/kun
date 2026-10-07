@@ -22,7 +22,7 @@ export default function ErrorPage({
       action={
         <button
           onClick={() => retry()}
-          className="kun-btn-primary rounded-full px-4 py-2 text-[13px] font-medium"
+          className="kun-btn-primary inline-flex h-11 items-center rounded-full px-6 text-[14px] font-medium"
         >
           Try again
         </button>

@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 import { readJson } from "@/lib/http";
 import { toast } from "./Toast";
+import { Modal } from "./ui/Modal";
 
 export function PublishTemplate({
   graphId,
@@ -13,6 +14,7 @@ export function PublishTemplate({
   title: string;
   onClose: () => void;
 }) {
+  const ids = { name: useId(), desc: useId(), tags: useId() };
   const [name, setName] = useState(title);
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState("");
@@ -47,63 +49,77 @@ export function PublishTemplate({
     }
   };
 
+  const label = "mb-1.5 block text-[13px] font-medium text-ink";
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-      <div className="kun-pop w-full max-w-md rounded-2xl border border-line2 bg-card p-5 shadow-2xl">
-        <p className="font-mono text-[10px] uppercase tracking-[0.18em] text-faint">
-          Templates
-        </p>
-        <h2 className="mt-1 text-[18px] font-semibold text-ink">
-          Publish workbook
-        </h2>
-        <p className="mt-1 text-[12.5px] leading-relaxed text-muted">
-          Anyone in this deployment can browse and clone it. Uploaded media is
-          stripped; skills travel with the snapshot.
-        </p>
-        <label className="mt-4 block text-[11px] text-muted">
-          Title
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="mt-1 w-full rounded-md border border-line bg-sunken px-2 py-1.5 text-[13px] text-ink outline-none focus:border-line2"
-          />
-        </label>
-        <label className="mt-3 block text-[11px] text-muted">
-          Description
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            rows={3}
-            className="mt-1 w-full resize-y rounded-md border border-line bg-sunken px-2 py-1.5 text-[13px] text-ink outline-none focus:border-line2"
-          />
-        </label>
-        <label className="mt-3 block text-[11px] text-muted">
-          Tags
-          <input
-            value={tags}
-            onChange={(e) => setTags(e.target.value)}
-            placeholder="image, product, starter"
-            className="mt-1 w-full rounded-md border border-line bg-sunken px-2 py-1.5 text-[13px] text-ink outline-none focus:border-line2"
-          />
-        </label>
-        <div className="mt-5 flex justify-end gap-2">
+    <Modal
+      title="Publish workbook"
+      description="Anyone on this deployment can browse and clone it. Uploaded media is stripped; skills travel with the snapshot."
+      onClose={onClose}
+      footer={
+        <>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full px-3 py-1.5 text-[13px] text-muted hover:text-ink"
+            className="h-10 rounded-full px-5 text-[13.5px] text-muted transition-colors hover:text-ink"
           >
             Cancel
           </button>
           <button
             type="button"
             onClick={() => void publish()}
-            disabled={busy}
-            className="kun-btn-primary rounded-full px-4 py-1.5 text-[13px] font-medium disabled:opacity-50"
+            disabled={busy || !name.trim()}
+            className="kun-btn-primary h-10 rounded-full px-6 text-[13.5px] font-medium disabled:opacity-60"
           >
             {busy ? "Publishing…" : "Publish"}
           </button>
+        </>
+      }
+    >
+      <form
+        className="space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void publish();
+        }}
+      >
+        <div>
+          <label htmlFor={ids.name} className={label}>
+            Title
+          </label>
+          <input
+            id={ids.name}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="kun-input"
+          />
         </div>
-      </div>
-    </div>
+        <div>
+          <label htmlFor={ids.desc} className={label}>
+            Description
+          </label>
+          <textarea
+            id={ids.desc}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+            className="kun-input resize-y"
+          />
+        </div>
+        <div>
+          <label htmlFor={ids.tags} className={label}>
+            Tags
+          </label>
+          <input
+            id={ids.tags}
+            value={tags}
+            onChange={(e) => setTags(e.target.value)}
+            placeholder="image, product, starter"
+            className="kun-input"
+          />
+          <p className="mt-1.5 text-[12.5px] text-faint">Separate with commas.</p>
+        </div>
+      </form>
+    </Modal>
   );
 }

@@ -1,12 +1,21 @@
 "use client";
 
+import { CheckCircle, WarningCircle } from "@phosphor-icons/react";
 import { useTheme } from "./ThemeProvider";
+import { Modal } from "./ui/Modal";
+import type { ThemePref } from "@/lib/theme";
+
+const THEMES: { value: ThemePref; label: string }[] = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+];
 
 /**
- * System status dialog — there are no user-facing keys anymore. The
- * platform's OpenRouter key lives in the server's .env, so this only
- * reports whether runs are possible (used by onboarding when .env is
- * missing) and hosts the appearance preference.
+ * System status dialog. There are no user-facing keys: the platform's
+ * OpenRouter key lives in the server's .env, so this only reports whether runs
+ * are possible (used by onboarding when .env is missing) and hosts the
+ * appearance preference.
  */
 export function SettingsModal({
   env,
@@ -21,92 +30,74 @@ export function SettingsModal({
   const configured = !!env.openrouter;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-canvas/70 p-4 backdrop-blur-sm">
-      <div className="kun-pop w-full max-w-md overflow-hidden rounded-2xl border border-line bg-card shadow-2xl shadow-black/50">
-        {/* header */}
-        <div className="flex items-start justify-between px-5 pb-3 pt-4">
+    <Modal
+      title={onboarding ? "Welcome to كُن" : "Settings"}
+      description={
+        onboarding
+          ? "One thing to check before you start."
+          : "Platform status and appearance."
+      }
+      onClose={onClose}
+      dismissible={!onboarding}
+      footer={
+        <button
+          type="button"
+          onClick={onClose}
+          className="kun-btn-primary h-10 rounded-full px-6 text-[13.5px] font-medium"
+        >
+          {onboarding ? "Got it" : "Done"}
+        </button>
+      }
+    >
+      <div className="space-y-6">
+        <div
+          className={`flex gap-3 rounded-xl border p-4 ${
+            configured ? "border-ok/40 bg-ok/5" : "border-warn/50 bg-warn/5"
+          }`}
+        >
+          {configured ? (
+            <CheckCircle size={20} weight="fill" className="mt-px shrink-0 text-ok" aria-hidden />
+          ) : (
+            <WarningCircle size={20} weight="fill" className="mt-px shrink-0 text-warn" aria-hidden />
+          )}
           <div>
-            <h2 className="text-[14px] font-semibold text-ink">
-              {onboarding ? "Welcome to كُن" : "Settings"}
-            </h2>
-            <p className="mt-0.5 text-[12px] leading-snug text-muted">
-              {onboarding
-                ? "One thing to check before you start."
-                : "Platform status and appearance."}
+            <p className="text-[14px] font-medium text-ink">
+              OpenRouter {configured ? "is configured" : "is not configured"}
+            </p>
+            <p className="mt-1 text-[13px] leading-relaxed text-muted">
+              {configured
+                ? "Every model runs through the platform's key. There is nothing to set up."
+                : "Runs are disabled until the operator sets OPENROUTER_API_KEY in the server environment."}
             </p>
           </div>
-          {!onboarding && (
-            <button
-              onClick={onClose}
-              title="Close"
-              className="flex h-6 w-6 items-center justify-center rounded-md text-faint transition-colors hover:bg-white/5 hover:text-ink"
-            >
-              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden>
-                <path d="M1.5 1.5 8.5 8.5M8.5 1.5 1.5 8.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-              </svg>
-            </button>
-          )}
         </div>
 
-        <div className="max-h-[60vh] space-y-4 overflow-auto px-5 pb-1">
+        <div>
+          <p className="mb-2.5 text-[13px] font-medium text-ink">Appearance</p>
           <div
-            className={`rounded-lg border p-3 ${
-              configured ? "border-ok/40" : "border-warn/50"
-            }`}
+            role="radiogroup"
+            aria-label="Theme"
+            className="inline-flex gap-1 rounded-full border border-line p-1"
           >
-            <div className="mb-1 flex items-center gap-2">
-              <span className="font-mono text-[9.5px] uppercase tracking-[0.16em] text-muted">
-                OpenRouter
-              </span>
-              <span
-                className={`rounded-full border px-1.5 py-px font-mono text-[8.5px] uppercase tracking-wider ${
-                  configured
-                    ? "border-ok/40 text-ok"
-                    : "border-warn/50 text-warn"
+            {THEMES.map(({ value, label }) => (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                aria-checked={theme.pref === value}
+                onClick={() => theme.setPref(value)}
+                className={`h-8 rounded-full px-4 text-[13px] transition-colors ${
+                  theme.pref === value
+                    ? "bg-ink font-medium text-canvas"
+                    : "text-muted hover:text-ink"
                 }`}
               >
-                {configured ? "configured" : "not configured"}
-              </span>
-            </div>
-            <p className="text-[11.5px] leading-snug text-muted">
-              {configured
-                ? "All models run through the platform's OpenRouter key — nothing to set up."
-                : "Runs are disabled until the operator sets OPENROUTER_API_KEY in the server .env."}
-            </p>
+                {label}
+              </button>
+            ))}
           </div>
-
-          <div>
-            <p className="mb-2 font-mono text-[9.5px] uppercase tracking-[0.16em] text-muted">
-              Appearance
-            </p>
-            <div className="flex gap-1">
-              {(["system", "light", "dark"] as const).map((opt) => (
-                <button
-                  key={opt}
-                  onClick={() => theme.setPref(opt)}
-                  className={`rounded-full px-3 py-1 font-mono text-[10px] uppercase tracking-wider ${
-                    theme.pref === opt
-                      ? "bg-ink text-canvas"
-                      : "border border-line text-muted"
-                  }`}
-                >
-                  {opt}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* actions */}
-        <div className="mt-4 flex items-center justify-end gap-2 border-t border-line bg-sunken/50 px-5 py-3">
-          <button
-            onClick={onClose}
-            className="kun-btn-primary rounded-full px-4 py-1.5 text-[12px] font-medium transition-all hover:brightness-110 active:scale-[0.98]"
-          >
-            {onboarding ? "Got it" : "Done"}
-          </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

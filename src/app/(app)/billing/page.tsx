@@ -1,34 +1,40 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AppHeader } from "@/components/AppHeader";
-import { useSettings } from "@/lib/use-settings";
-import { SettingsModal } from "@/components/SettingsModal";
 import { readJson } from "@/lib/http";
 import { fmtCost } from "@/lib/format";
 import { toast } from "@/components/Toast";
-import type { Plan } from "@/lib/billing";
+import { PageHeader } from "@/components/shell/PageHeader";
+import { PlanGrid } from "@/components/pricing/PlanGrid";
+import type { Plan, PlanId } from "@/lib/billing";
+
+interface Billing {
+  plan: Plan;
+  plans: Plan[];
+  usage: {
+    runs: number;
+    runLimit: number;
+    amountUsd: number;
+    tokens: number;
+    creditAllowanceUsd: number;
+  };
+}
 
 export default function BillingPage() {
-  const settings = useSettings();
-  const [data, setData] = useState<{
-    plan: Plan;
-    plans: Plan[];
-    usage: { runs: number; runLimit: number; amountUsd: number; tokens: number; creditAllowanceUsd: number };
-  } | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [data, setData] = useState<Billing | null>(null);
+  const [busy, setBusy] = useState<PlanId | null>(null);
 
   const load = () => {
     fetch("/api/billing")
-      .then((r) => readJson<NonNullable<typeof data>>(r))
+      .then((r) => readJson<Billing>(r))
       .then(setData)
       .catch(() => setData(null));
   };
 
   useEffect(load, []);
 
-  const switchPlan = async (planId: string) => {
-    setBusy(true);
+  const switchPlan = async (planId: PlanId) => {
+    setBusy(planId);
     try {
       const res = await fetch("/api/billing/checkout", {
         method: "POST",
@@ -42,67 +48,97 @@ export default function BillingPage() {
     } catch (e) {
       toast(e instanceof Error ? e.message : "Checkout failed", "error");
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
+  const used = data ? Math.min(1, data.usage.runs / Math.max(1, data.usage.runLimit)) : 0;
+
   return (
-    <div className="kun-atmosphere relative flex min-h-dvh flex-col">
-      <AppHeader active="billing" onSettings={() => settings.setShowSettings(true)} />
-      <main className="mx-auto w-full max-w-4xl flex-1 px-5 py-10">
-        <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-faint">Usage</p>
-        <h1 className="mt-1.5 text-[28px] font-semibold text-ink">Plan & credits</h1>
-        <p className="mt-1 max-w-xl text-[13.5px] text-muted">
-          You pay for reliability: durable runs, history, triggers, and platform-managed OpenRouter usage — not for drawing nodes.
-        </p>
-        {data && (
-          <>
-            <div className="mt-6 rounded-2xl border border-line bg-card/80 p-4">
-              <p className="text-[14px] font-medium text-ink">Current: {data.plan.label}</p>
-              <p className="mt-1 font-mono text-[11px] text-muted">
-                {data.usage.runs}/{data.usage.runLimit} runs this month ·{" "}
-                {fmtCost(data.usage.amountUsd)} usage · {data.usage.tokens.toLocaleString()} tokens
-              </p>
+    <div className="mx-auto w-full max-w-5xl px-5 py-10 md:px-10 md:py-12">
+      <PageHeader
+        title="Plan and usage"
+        description="You pay for reliability: durable runs, history, triggers and managed model usage. Drawing nodes is free."
+      />
+
+      {data === null ? (
+        <div className="space-y-4">
+          <div className="kun-skeleton h-36" />
+          <div className="grid gap-4 md:grid-cols-3">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="kun-skeleton h-[380px]" />
+            ))}
+          </div>
+        </div>
+      ) : (
+        <>
+          <section
+            aria-label="This month"
+            className="rounded-2xl border border-line bg-card/70 p-6"
+          >
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <h2 className="text-[16px] font-medium text-ink">
+                {data.plan.label} plan
+              </h2>
+              <p className="text-[13px] text-muted">This month</p>
             </div>
-            <ul className="mt-4 grid gap-3 md:grid-cols-3">
-              {data.plans.map((p) => (
-                <li key={p.id} className="rounded-2xl border border-line bg-card/70 p-4">
-                  <p className="text-[15px] font-medium text-ink">{p.label}</p>
-                  <p className="mt-1 text-[13px] text-muted">
-                    {p.monthlyUsd
-                      ? `$${p.monthlyUsd}/mo`
-                      : p.seatUsd
-                        ? `$${p.seatUsd}/seat`
-                        : "Free"}
-                  </p>
-                  <ul className="mt-3 space-y-1 text-[12px] text-muted">
-                    <li>{p.monthlyRuns.toLocaleString()} monthly runs</li>
-                    <li>{p.monthlyCreditsUsd ? `$${p.monthlyCreditsUsd} usage credits` : "Pay per use"}</li>
-                    <li>{p.schedules ? "Cron + webhooks" : "Manual runs"}</li>
-                      <li>{p.mcp ? "MCP + API keys" : "No MCP"}</li>
-                      <li>{p.team ? "Team seats" : "Personal workspace"}</li>
-                    </ul>
-                    {data.plan.id !== p.id && (
-                      <button
-                        disabled={busy}
-                        onClick={() => switchPlan(p.id)}
-                        className="mt-3 rounded-lg border border-line px-3 py-1.5 text-[12px] text-ink transition-colors hover:bg-white/5 disabled:opacity-50"
-                      >
-                        {busy ? "Switching…" : `Switch to ${p.label}`}
-                      </button>
-                    )}
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-      </main>
-      {(settings.showSettings || settings.needsOnboard) && (
-        <SettingsModal
-          env={settings.env}
-          onboarding={settings.needsOnboard && !settings.showSettings}
-          onClose={settings.dismissOnboard}
-        />
+
+            <div className="mt-5">
+              <div className="flex items-baseline justify-between text-[13px]">
+                <span className="text-muted">Runs</span>
+                <span className="font-mono tabular-nums text-ink">
+                  {data.usage.runs.toLocaleString()} /{" "}
+                  {data.usage.runLimit.toLocaleString()}
+                </span>
+              </div>
+              <div
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={data.usage.runLimit}
+                aria-valuenow={data.usage.runs}
+                aria-label="Runs used this month"
+                className="mt-2 h-2 overflow-hidden rounded-full bg-ink/10"
+              >
+                <div
+                  className={`h-full rounded-full transition-[width] ${used > 0.9 ? "bg-warn" : "bg-ink"}`}
+                  style={{ width: `${Math.max(used * 100, used > 0 ? 2 : 0)}%` }}
+                />
+              </div>
+            </div>
+
+            <dl className="mt-6 grid grid-cols-2 gap-6 border-t border-line pt-5">
+              <div>
+                <dt className="text-[13px] text-muted">Model usage</dt>
+                <dd className="mt-1 font-mono text-[18px] tabular-nums text-ink">
+                  {/* Ledger amounts are micro-dollars despite the field name. */}
+                  {fmtCost(data.usage.amountUsd)}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-[13px] text-muted">Tokens</dt>
+                <dd className="mt-1 font-mono text-[18px] tabular-nums text-ink">
+                  {data.usage.tokens.toLocaleString()}
+                </dd>
+              </div>
+            </dl>
+          </section>
+
+          <h2 className="mb-4 mt-12 text-[18px] font-semibold tracking-tight text-ink">
+            Change plan
+          </h2>
+          <PlanGrid
+            current={data.plan.id}
+            busy={busy}
+            onSelect={(id) => void switchPlan(id)}
+            label={(p, isCurrent) =>
+              isCurrent
+                ? "Current plan"
+                : busy === p.id
+                  ? "Switching…"
+                  : `Switch to ${p.label}`
+            }
+          />
+        </>
       )}
     </div>
   );

@@ -16,6 +16,45 @@ watch results stream in live.
 - **Drizzle ORM + better-sqlite3** — workbooks, run history, per-node usage
 - Media artifacts stored on disk under `.data/media`
 
+## Routes and layout
+
+Each route group owns exactly one kind of layout, so a page never has to
+guess what chrome surrounds it.
+
+| group         | URLs                                  | layout                                              |
+| ------------- | ------------------------------------- | --------------------------------------------------- |
+| `(marketing)` | `/`                                   | landing page: marketing header + footer             |
+| `(site)`      | `/templates`, `/templates/[slug]`, `/pricing` | adapts: workspace shell if signed in, marketing chrome if not |
+| `(auth)`      | `/sign-in`, `/sign-up`                | split form + photograph, no app chrome              |
+| `(app)`       | `/workbooks`, `/runs`, `/billing`     | workspace shell (sidebar, account menu, sign out)   |
+| `(editor)`    | `/w/[id]`                             | full-bleed canvas, no shell                         |
+| `(admin)`     | `/admin`                              | workspace shell, gated to `ADMIN_EMAILS`            |
+| (ungrouped)   | `/s/[token]`                          | public read-only share viewer                       |
+
+### Auth routing
+
+Two layers, deliberately split so they cannot loop:
+
+1. `src/proxy.ts` is an optimistic gate. For `/workbooks`, `/w`, `/runs`,
+   `/billing` and `/admin` it only asks "is there a session cookie for *this*
+   Supabase project?" and redirects to `/sign-in?next=...` if not. It never
+   decides that someone *is* signed in, and it does not touch the auth pages.
+2. Server layouts do the real check (`requirePageActor()` in `src/lib/guard.ts`,
+   memoised per request). An expired or revoked session therefore lands on
+   `/sign-in` with its destination preserved. The auth pages validate the
+   session themselves and only redirect a *validated* user onward.
+
+`?next=` is sanitised by `safeNext()` (`src/lib/routes.ts`): same-origin paths
+only, and never an auth page, the landing page or an API route.
+
+## Design system
+
+Colour carries meaning. Surfaces are neutral; the only hues are the four data
+types that travel along wires (text, image, audio, video) plus blue for
+running, green for ok and red for error. Tokens live in `src/app/globals.css`.
+The node card is one presentational component (`components/node/NodeFrame`),
+shared by the canvas and the landing-page preview.
+
 ## Providers (registry-based)
 
 Providers are resolved from a registry (`src/lib/providers.ts`). Each spec

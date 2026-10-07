@@ -113,7 +113,7 @@ function HtmlPreview({ code }: { code: string }) {
               key={v}
               onClick={() => setView(v)}
               className={`rounded px-1.5 py-0.5 transition-colors ${
-                view === v ? "bg-white/[0.07] text-ink" : "text-faint hover:text-muted"
+                view === v ? "bg-ink/[0.07] text-ink" : "text-faint hover:text-muted"
               }`}
             >
               {v}
@@ -205,7 +205,7 @@ function MediaEmbed({ kind, src }: { kind: string; src: string }) {
       href={downloadHref(src)}
       download={file}
       title="Download"
-      className="absolute right-1.5 top-1.5 z-10 rounded bg-black/55 px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-[0.12em] text-white/90 opacity-0 transition-opacity hover:bg-black/75 group-hover:opacity-100"
+      className="absolute right-2 top-2 z-10 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-medium text-white/95 opacity-0 backdrop-blur transition-opacity hover:bg-black/80 focus-visible:opacity-100 group-hover:opacity-100"
     >
       Save
     </a>

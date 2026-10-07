@@ -11,11 +11,11 @@ import {
 } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { X } from "@phosphor-icons/react";
 import {
   ReactFlow,
   Background,
   BackgroundVariant,
-  Controls,
   MiniMap,
   Panel,
   addEdge,
@@ -28,7 +28,13 @@ import {
   type IsValidConnection,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { NODE_TYPES, matchPorts, nodeDef, portAccepts } from "@/lib/nodes";
+import {
+  NODE_TYPES,
+  matchPorts,
+  nodeDef,
+  portAccepts,
+  portDef,
+} from "@/lib/nodes";
 import type {
   FlowNodeData,
   GraphDoc,
@@ -55,6 +61,9 @@ import { AssistantPanel } from "./AssistantPanel";
 import { FlowNode } from "./FlowNode";
 import { DND_MIME, Palette } from "./Palette";
 import { PlayBar } from "./PlayBar";
+import { CanvasToolbar } from "./CanvasToolbar";
+import { PORT_COLOR } from "./node/tokens";
+import { APP_HOME } from "@/lib/routes";
 import { RunsPanel } from "./RunsPanel";
 import { SettingsModal } from "./SettingsModal";
 import { StatusScreen } from "./StatusScreen";
@@ -1104,28 +1113,55 @@ export function Canvas({
     return m;
   }, [nodes]);
 
+  // Wires take the colour of the data they carry; live ones animate.
+  const kindOf = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const n of nodes) m[n.id] = n.data.kind;
+    return m;
+  }, [nodes]);
+
   const styledEdges = useMemo(
     () =>
-      edges.map((e) =>
-        statusOf[e.source] === "running" || statusOf[e.target] === "running"
-          ? { ...e, className: "kun-edge-live" }
-          : e,
-      ),
-    [edges, statusOf],
+      edges.map((e) => {
+        const type = portDef(kindOf[e.source] ?? "", e.sourceHandle ?? "", "out")?.type;
+        const styled = type
+          ? { ...e, style: { ...e.style, stroke: PORT_COLOR[type] } }
+          : e;
+        return statusOf[e.source] === "running" || statusOf[e.target] === "running"
+          ? { ...styled, className: "kun-edge-live" }
+          : styled;
+      }),
+    [edges, statusOf, kindOf],
   );
+
+  // The right dock holds one panel at a time.
+  const toggleAssistant = () => {
+    const next = !showAssistant;
+    setShowAssistant(next);
+    if (next && showRuns) {
+      setShowRuns(false);
+      syncPanelFlag("runs", false);
+    }
+  };
+  const toggleRuns = () => {
+    const next = !showRuns;
+    setShowRuns(next);
+    syncPanelFlag("runs", next);
+    if (next && showAssistant) setShowAssistant(false);
+  };
 
   if (missing) {
     return (
       <StatusScreen
         kicker="404"
         title="This workbook isn’t here"
-        body="It may have been deleted, or the link is stale."
+        body="It may have been deleted, or the link is out of date."
         action={
           <Link
-            href="/"
-            className="kun-btn-primary rounded-full px-4 py-2 text-[13px] font-medium"
+            href={readOnly ? "/" : APP_HOME}
+            className="kun-btn-primary inline-flex h-11 items-center rounded-full px-6 text-[14px] font-medium"
           >
-            Back to workbooks
+            {readOnly ? "Go to Kun" : "Back to workbooks"}
           </Link>
         }
       />
@@ -1136,6 +1172,9 @@ export function Canvas({
     <ModelCatalogProvider value={catalog}>
       <div className="flex h-dvh w-full flex-col bg-canvas">
         <PlayBar
+          readOnly={readOnly}
+          runsOpen={showRuns}
+          onRuns={readOnly ? undefined : toggleRuns}
           title={title}
           onTitle={(t: string) => {
             setTitle(t);
@@ -1154,7 +1193,7 @@ export function Canvas({
           onNew={() => newBook()}
           onSettings={() => settingsApi.setShowSettings(true)}
           assistantOpen={showAssistant}
-          onAssistant={() => setShowAssistant((v) => !v)}
+          onAssistant={readOnly ? undefined : toggleAssistant}
           onPublish={readOnly ? undefined : () => setShowPublish(true)}
           onShare={
             readOnly
@@ -1177,7 +1216,12 @@ export function Canvas({
                 }
           }
         />
-        <div className="relative flex-1" onDrop={onDrop} onDragOver={onDragOver}>
+        <div className="relative flex min-h-0 flex-1">
+        <div
+          className="relative min-w-0 flex-1"
+          onDrop={onDrop}
+          onDragOver={onDragOver}
+        >
           <ReactFlow<FN>
             nodes={nodes}
             edges={styledEdges}
@@ -1236,7 +1280,7 @@ export function Canvas({
               variant={BackgroundVariant.Dots}
               gap={24}
               size={1.3}
-              color={theme.resolved === "light" ? "#d8d4cc" : "#1c1c1c"}
+              color={theme.resolved === "light" ? "#d3d3cc" : "#1d2124"}
             />
             {showMini && (
               <MiniMap
@@ -1245,181 +1289,132 @@ export function Canvas({
                 position="top-right"
                 maskColor={
                   theme.resolved === "light"
-                    ? "rgba(243, 242, 239, 0.75)"
-                    : "rgba(9, 9, 9, 0.75)"
+                    ? "rgba(242, 242, 239, 0.75)"
+                    : "rgba(10, 11, 12, 0.75)"
                 }
                 style={{
-                  background: theme.resolved === "light" ? "#ffffff" : "#111111",
+                  background: theme.resolved === "light" ? "#ffffff" : "#111315",
                   border: `1px solid ${
-                    theme.resolved === "light" ? "#ddd9d2" : "#222222"
+                    theme.resolved === "light" ? "#dcdcd6" : "#31373b"
                   }`,
-                  borderRadius: 10,
-                  marginTop: 36,
+                  borderRadius: 12,
+                  marginTop: 12,
                   marginRight: 12,
-                  width: 160,
-                  height: 110,
+                  width: 168,
+                  height: 112,
                 }}
               />
             )}
-            <Controls showInteractive={false} />
-            <Panel position="top-right">
-              <div className="flex items-center gap-2">
-                <RunsToggle
-                  open={showRuns}
-                  onToggle={() => {
-                    const next = !showRuns;
-                    setShowRuns(next);
-                    syncPanelFlag("runs", next);
-                  }}
-                />
-                <button
-                  onClick={arrange}
-                  title="Arrange nodes"
-                  className="flex h-7 items-center gap-1.5 rounded-lg border border-line bg-card/80 px-2 text-faint backdrop-blur transition-colors hover:text-ink"
-                >
-                  <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
-                    <rect x="1" y="1.5" width="4" height="3" rx="0.8" stroke="currentColor" strokeWidth="1.2" />
-                    <rect x="7" y="4" width="4" height="3" rx="0.8" stroke="currentColor" strokeWidth="1.2" />
-                    <rect x="1" y="7.5" width="4" height="3" rx="0.8" stroke="currentColor" strokeWidth="1.2" />
-                    <path d="M5 3h2M5 9h2" stroke="currentColor" strokeWidth="1.2" />
-                  </svg>
-                  <span className="font-mono text-[9px] uppercase tracking-[0.14em]">
-                    Arrange
-                  </span>
-                </button>
-                <button
-                  onClick={() => {
-                    const next = !showMini;
-                    setShowMini(next);
-                    syncPanelFlag("mini", next);
-                  }}
-                  title={showMini ? "Hide minimap" : "Show minimap"}
-                  aria-label={showMini ? "Hide minimap" : "Show minimap"}
-                  className={`flex h-7 w-7 items-center justify-center rounded-lg border backdrop-blur transition-colors ${
-                    showMini
-                      ? "border-line2 bg-card text-ink"
-                      : "border-line bg-card/80 text-faint hover:text-muted"
-                  }`}
-                >
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 14 14"
-                    fill="none"
-                    aria-hidden
-                  >
-                    <rect
-                      x="1.5"
-                      y="1.5"
-                      width="11"
-                      height="11"
-                      rx="2"
-                      stroke="currentColor"
-                      strokeWidth="1.2"
-                    />
-                    <rect x="4" y="5" width="3" height="2" rx="0.6" fill="currentColor" />
-                    <rect
-                      x="8"
-                      y="8.5"
-                      width="2.5"
-                      height="2"
-                      rx="0.6"
-                      fill="currentColor"
-                    />
-                  </svg>
-                </button>
-              </div>
+            <Panel position="bottom-left">
+              <CanvasToolbar
+                onArrange={arrange}
+                readOnly={readOnly}
+                minimap={showMini}
+                onToggleMinimap={() => {
+                  const next = !showMini;
+                  setShowMini(next);
+                  syncPanelFlag("mini", next);
+                }}
+              />
             </Panel>
             {ready && nodes.length === 0 && (
               <Panel position="top-center">
-                <div className="kun-pop rounded-full border border-line bg-card/80 px-4 py-1.5 text-[11.5px] text-muted backdrop-blur">
-                  Empty workbook — drag a node in from the panel.
+                <div className="kun-pop rounded-full border border-line2 bg-raised/95 px-5 py-2 text-[13px] text-muted shadow-lg backdrop-blur">
+                  {readOnly
+                    ? "This workbook is empty."
+                    : "Empty workbook. Add a node from the library, or ask the assistant."}
                 </div>
               </Panel>
             )}
           </ReactFlow>
-          {!readOnly && <Palette onAdd={addNode} defs={NODE_TYPES} />}
-          <div className="absolute bottom-3 left-3 z-10 w-[min(420px,calc(100vw-1.5rem))]">
-              <MiniConsole
-                lines={consoleLines}
-                runId={activeRunId}
-                costUsd={runCostUsd}
-                collapsed={consoleCollapsed}
-                onToggle={() => setConsoleCollapsed((v) => !v)}
-              />
-            </div>
-          {showAssistant && !readOnly && (
-            <AssistantPanel
-              graphId={graphId}
-              selectedNodeIds={nodes.filter((n) => n.selected).map((n) => n.id)}
-              graph={{
-                nodes: nodes.map((n) => ({
-                  id: n.id,
-                  type: "flow",
-                  position: n.position,
-                  data: n.data,
-                })),
-                edges: edges.map((e) => ({
-                  id: e.id,
-                  source: e.source,
-                  sourceHandle: e.sourceHandle ?? null,
-                  target: e.target,
-                  targetHandle: e.targetHandle ?? null,
-                })),
-              }}
-              onApply={(next: GraphDoc) => {
-                setNodes(
-                  next.nodes.map(
-                    (n) =>
-                      ({
-                        id: n.id,
-                        type: "flow",
-                        position: n.position,
-                        data: n.data,
-                      }) as FN,
-                  ),
-                );
-                setEdges(
-                  next.edges.map((e) => ({ ...e, type: "smoothstep" })),
-                );
-                touch();
-              }}
-              onClose={() => setShowAssistant(false)}
+          {!readOnly && (
+            <Palette
+              onAdd={addNode}
+              defs={NODE_TYPES}
+              emptyCanvas={ready && nodes.length === 0}
             />
           )}
-          {showRuns && (
-            <div className="kun-pop absolute bottom-3 right-3 z-10 max-h-[50vh] w-80 overflow-auto rounded-xl border border-line bg-card/95 shadow-2xl backdrop-blur">
-              <div className="sticky top-0 flex items-center justify-between border-b border-line bg-card/95 px-3 py-2">
-                <span className="font-mono text-[9px] uppercase tracking-[0.18em] text-faint">
-                  Run history
-                </span>
-                <div className="flex items-center gap-2">
-                  <Link
-                    href={`/runs?graphId=${graphId}`}
-                    className="font-mono text-[9px] uppercase tracking-wider text-faint hover:text-live"
-                  >
-                    All runs
-                  </Link>
-                  <button
-                    onClick={() => setShowRuns(false)}
-                    aria-label="Close run history"
-                    title="Close run history"
-                    className="flex h-4 w-4 items-center justify-center rounded text-faint transition-colors hover:bg-white/5 hover:text-muted"
-                  >
-                    <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden>
-                      <path
-                        d="M1.5 1.5 6.5 6.5M6.5 1.5 1.5 6.5"
-                        stroke="currentColor"
-                        strokeWidth="1.2"
-                        strokeLinecap="round"
-                      />
-                    </svg>
-                  </button>
-                </div>
+          <div className="absolute bottom-3 right-3 z-10 hidden w-[min(380px,calc(100%-336px))] min-w-[220px] md:block">
+            <MiniConsole
+              lines={consoleLines}
+              runId={activeRunId}
+              costUsd={runCostUsd}
+              collapsed={consoleCollapsed}
+              onToggle={() => setConsoleCollapsed((v) => !v)}
+            />
+          </div>
+        </div>
+
+        {showAssistant && !readOnly && (
+          <AssistantPanel
+            graphId={graphId}
+            selectedNodeIds={nodes.filter((n) => n.selected).map((n) => n.id)}
+            graph={{
+              nodes: nodes.map((n) => ({
+                id: n.id,
+                type: "flow",
+                position: n.position,
+                data: n.data,
+              })),
+              edges: edges.map((e) => ({
+                id: e.id,
+                source: e.source,
+                sourceHandle: e.sourceHandle ?? null,
+                target: e.target,
+                targetHandle: e.targetHandle ?? null,
+              })),
+            }}
+            onApply={(next: GraphDoc) => {
+              setNodes(
+                next.nodes.map(
+                  (n) =>
+                    ({
+                      id: n.id,
+                      type: "flow",
+                      position: n.position,
+                      data: n.data,
+                    }) as FN,
+                ),
+              );
+              setEdges(next.edges.map((e) => ({ ...e, type: "smoothstep" })));
+              touch();
+            }}
+            onClose={() => setShowAssistant(false)}
+          />
+        )}
+        {showRuns && !readOnly && (
+          <aside
+            aria-label="Run history"
+            className="kun-pop z-30 flex min-h-0 w-[388px] shrink-0 flex-col border-l border-line bg-card max-md:absolute max-md:inset-0 max-md:w-full max-md:border-l-0"
+          >
+            <header className="flex h-12 shrink-0 items-center justify-between border-b border-line pl-4 pr-3">
+              <p className="text-[13.5px] font-medium text-ink">Run history</p>
+              <div className="flex items-center gap-1">
+                <Link
+                  href={`/runs?graphId=${graphId}`}
+                  className="rounded-full px-3 py-1.5 text-[12.5px] text-muted transition-colors hover:bg-ink/8 hover:text-ink"
+                >
+                  All runs
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRuns(false);
+                    syncPanelFlag("runs", false);
+                  }}
+                  aria-label="Close run history"
+                  title="Close run history"
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-faint transition-colors hover:bg-ink/8 hover:text-ink"
+                >
+                  <X size={14} weight="bold" aria-hidden />
+                </button>
               </div>
+            </header>
+            <div className="min-h-0 flex-1 overflow-auto">
               <RunsPanel graphId={graphId} refreshKey={runsTick} />
             </div>
-          )}
+          </aside>
+        )}
         </div>
 
         {(settingsApi.showSettings || settingsApi.needsOnboard) && (
@@ -1438,28 +1433,5 @@ export function Canvas({
         )}
       </div>
     </ModelCatalogProvider>
-  );
-}
-
-function RunsToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
-  return (
-    <button
-      onClick={onToggle}
-      title={open ? "Hide run history" : "Show run history"}
-      className={`flex h-7 items-center gap-1.5 rounded-lg border px-2 backdrop-blur transition-colors ${
-        open
-          ? "border-line2 bg-card text-ink"
-          : "border-line bg-card/80 text-faint hover:text-muted"
-      }`}
-    >
-      <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden>
-        <circle cx="3" cy="6" r="1.1" fill="currentColor" />
-        <circle cx="6" cy="6" r="1.1" fill="currentColor" />
-        <circle cx="9" cy="6" r="1.1" fill="currentColor" />
-      </svg>
-      <span className="font-mono text-[9px] uppercase tracking-[0.14em]">
-        Runs
-      </span>
-    </button>
   );
 }

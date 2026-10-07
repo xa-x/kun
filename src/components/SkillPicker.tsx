@@ -1,5 +1,6 @@
 "use client";
 
+import { CaretDown, Sparkle } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { readJson } from "@/lib/http";
 import { parseSkillMd } from "@/lib/skills/format";
@@ -349,37 +350,34 @@ export function SkillPicker({
   };
 
   return (
-    <div ref={box} className="relative mb-2">
+    <div ref={box} className="relative">
       <button
         type="button"
         aria-expanded={open}
         aria-haspopup="listbox"
         onClick={() => setOpen((v) => !v)}
-        className="nodrag flex w-full items-center justify-between gap-2 rounded-md border border-line bg-sunken px-2 py-1.5 text-left text-[11px] text-muted outline-none transition-colors hover:border-line2 focus:border-line2"
+        className={`nodrag kun-chip-select flex w-full items-center justify-between gap-2 bg-none pr-2.5 text-left ${
+          selected ? "!text-ink" : ""
+        }`}
       >
-        <span className={`truncate ${selected ? "text-ink/85" : ""}`}>
-          {selected
-            ? selected.displayName
-            : compact
-              ? "Skill · none"
-              : "Pick a skill…"}
+        <span className="flex min-w-0 items-center gap-1.5">
+          <Sparkle size={11} weight={selected ? "fill" : "bold"} aria-hidden />
+          <span className="truncate">
+            {selected
+              ? selected.displayName
+              : compact
+                ? "No skill"
+                : "Pick a skill…"}
+          </span>
         </span>
-        <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden>
-          <path
-            d="M1 2.5 4 5.5 7 2.5"
-            stroke="currentColor"
-            strokeWidth="1.3"
-            fill="none"
-            strokeLinecap="round"
-          />
-        </svg>
+        <CaretDown size={10} weight="bold" aria-hidden />
       </button>
       {selected && (
         <button
           type="button"
           aria-label="Clear selected skill"
           onClick={() => onPick(null)}
-          className="nodrag absolute right-6 top-1/2 z-10 -translate-y-1/2 rounded px-1 text-[10px] leading-none text-faint transition-colors hover:bg-white/5 hover:text-ink"
+          className="nodrag absolute right-7 top-1/2 z-10 -translate-y-1/2 rounded-full px-1.5 text-[12px] leading-none text-faint transition-colors hover:bg-ink/10 hover:text-ink"
         >
           ×
         </button>
@@ -529,7 +527,7 @@ export function SkillPicker({
           {localHits.length > 0 && (
             <ul className="py-1">
               {localHits.map((s) => (
-                <li key={s.id} className="flex items-center hover:bg-white/[0.04]">
+                <li key={s.id} className="flex items-center hover:bg-ink/[0.04]">
                   <button
                     type="button"
                     onClick={() => void pickInstalled(s)}
@@ -565,7 +563,7 @@ export function SkillPicker({
                     key={s.id}
                     type="button"
                     onClick={() => void installRemote(s)}
-                    className="flex w-full flex-col items-start px-2 py-1.5 text-left hover:bg-white/[0.04]"
+                    className="flex w-full flex-col items-start px-2 py-1.5 text-left hover:bg-ink/[0.04]"
                   >
                     <span className="text-[11px] text-ink/90">{s.displayName || s.slug}</span>
                     <span className="line-clamp-2 text-[10px] text-faint">
@@ -583,14 +581,14 @@ export function SkillPicker({
             <button
               type="button"
               onClick={startCreate}
-              className="flex-1 px-2 py-1.5 text-left hover:bg-white/[0.04]"
+              className="flex-1 px-2 py-1.5 text-left hover:bg-ink/[0.04]"
             >
               + New skill
             </button>
             <button
               type="button"
               onClick={startImport}
-              className="border-l border-line px-2 py-1.5 hover:bg-white/[0.04]"
+              className="border-l border-line px-2 py-1.5 hover:bg-ink/[0.04]"
             >
               Import
             </button>
@@ -598,7 +596,7 @@ export function SkillPicker({
               type="button"
               onClick={() => void exportLibrary()}
               title="Download the whole library as a bundle"
-              className="border-l border-line px-2 py-1.5 hover:bg-white/[0.04]"
+              className="border-l border-line px-2 py-1.5 hover:bg-ink/[0.04]"
             >
               Export all
             </button>

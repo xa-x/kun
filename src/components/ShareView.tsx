@@ -42,17 +42,26 @@ export function ShareView({ token }: { token: string }) {
   }, [token]);
 
   if (state.kind === "load") {
-    return <StatusScreen kicker="Share" title="Opening workbook…" body="Loading a read-only copy." />;
+    return (
+      <StatusScreen
+        kicker="Shared workbook"
+        title="Opening workbook…"
+        body="Loading a read-only copy."
+      />
+    );
   }
   if (state.kind === "err") {
     return (
       <StatusScreen
-        kicker="Share"
+        kicker="Shared workbook"
         title="This link isn’t available"
         body={state.message}
         action={
-          <Link href="/" className="kun-btn-primary rounded-full px-4 py-2 text-[13px] font-medium">
-            Back to workbooks
+          <Link
+            href="/"
+            className="kun-btn-primary inline-flex h-11 items-center rounded-full px-6 text-[14px] font-medium"
+          >
+            Go to Kun
           </Link>
         }
       />

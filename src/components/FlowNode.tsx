@@ -6,9 +6,20 @@ import {
   Position,
   useEdges,
   useNodes,
+  useStore,
   type NodeProps,
 } from "@xyflow/react";
-import { nodeDef, type PortType } from "@/lib/nodes";
+import {
+  ArrowSquareOut,
+  Check,
+  Copy,
+  DownloadSimple,
+  Play,
+  Trash,
+  UploadSimple,
+  X,
+} from "@phosphor-icons/react";
+import { nodeDef, type NodeTypeDef } from "@/lib/nodes";
 import {
   CUSTOM_MODEL,
   filterModels,
@@ -26,9 +37,6 @@ import {
   type RecentModel,
 } from "@/lib/recent-models";
 import { useCatalog } from "@/lib/model-catalog";
-
-/** Legacy gateway tags may persist on old nodes; everything runs on OpenRouter. */
-const gateways: string[] = [];
 import { describeOutputs } from "@/lib/render";
 import {
   CUSTOM_PARAM,
@@ -40,31 +48,22 @@ import {
   resolveVoice,
   voiceChoices,
 } from "@/lib/media-params";
-import type { FlowNodeData } from "@/lib/types";
+import type { FlowNodeData, NodeOutput } from "@/lib/types";
 import { OutputRenderer, downloadOutputs } from "./OutputRenderer";
 import { SkillPicker } from "./SkillPicker";
 import { toast } from "./Toast";
 import { readJson } from "@/lib/http";
 import { fmtUsd } from "@/lib/format";
-
-const PORT_COLORS: Record<PortType, string> = {
-  text: "#3b82f6",
-  image: "#22c55e",
-  audio: "#ef4444",
-  video: "#60a5fa",
-  json: "#8a8a8a",
-};
-
-// Port rows stack from the top of the body on the left edge.
-const ROW_H = 24;
-const FIRST_ROW = 12;
-// Visual port size — keep in sync with .react-flow__handle in globals.css.
-const HANDLE = 11;
+import { NodeFrame, handleStyle, type PortPlacement } from "./node/NodeFrame";
+import { PORT_NAME } from "./node/tokens";
 
 const patch = (nodeId: string, p: Record<string, unknown>) =>
   window.dispatchEvent(
     new CustomEvent("kun:update", { detail: { nodeId, patch: p } }),
   );
+
+const emit = (name: string, nodeId: string) =>
+  window.dispatchEvent(new CustomEvent(name, { detail: { nodeId } }));
 
 async function saveSkillToLibrary(nodeId: string, d: FlowNodeData) {
   if (!d.text?.trim() && !d.label?.trim()) {
@@ -102,15 +101,26 @@ export function FlowNode({ id, data, selected }: NodeProps) {
   const def = nodeDef(d.kind);
   const [upl, setUpl] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [customModel, setCustomModel] = useState(false);
   const cat = useCatalog();
-  const incomingText = useIncomingText(id);
 
-  // Live OpenRouter list, trustworthy only when the last fetch succeeded
-  // (liveList is null otherwise) — the curated suggestions below age, and
-  // picking a retired id fails the run.
-  const need = kindForNode(d.kind) ?? "chat";
-  const live = liveList(cat.models, cat.errors);
+  // Narrow subscription: re-render only when *this* node's wiring changes,
+  // not on every drag of every other node.
+  const wiring = useStore((s) => {
+    const ins: string[] = [];
+    const outs: string[] = [];
+    for (const e of s.edges) {
+      if (e.target === id) ins.push(e.targetHandle ?? "");
+      if (e.source === id) outs.push(e.sourceHandle ?? "");
+    }
+    return `${ins.sort().join(",")}|${outs.sort().join(",")}`;
+  });
+  const connected = useMemo(() => {
+    const [i, o] = wiring.split("|");
+    return {
+      in: new Set(i ? i.split(",") : []),
+      out: new Set(o ? o.split(",") : []),
+    };
+  }, [wiring]);
 
   // Recently used models for this node kind, kept fresh across nodes.
   const [recents, setRecents] = useState<RecentModel[]>(() =>
@@ -121,6 +131,12 @@ export function FlowNode({ id, data, selected }: NodeProps) {
     window.addEventListener(RECENT_EVENT, on);
     return () => window.removeEventListener(RECENT_EVENT, on);
   }, [d.kind]);
+
+  // Live OpenRouter list, trustworthy only when the last fetch succeeded
+  // (liveList is null otherwise): the curated suggestions age, and picking a
+  // retired id fails the run.
+  const need = kindForNode(d.kind) ?? "chat";
+  const live = liveList(cat.models, cat.errors);
 
   const defaultModel =
     recents.length || def?.models?.length
@@ -146,9 +162,10 @@ export function FlowNode({ id, data, selected }: NodeProps) {
 
   const isMediaIn = ["image.in", "audio.in", "video.in"].includes(d.kind);
   const isSink = d.kind.startsWith("out.");
+  const isAi = ["llm", "image.gen", "tts", "video.gen"].includes(d.kind);
   const status = d.runStatus ?? "idle";
   const outputs = d.outputs ?? [];
-  // live-streamed text (LLM nodes) — shown while running
+  // live-streamed text (LLM nodes), shown while running
   const streaming = d.streamingText ?? "";
   const hasContent =
     outputs.some((o) => (o.type === "text" ? !!o.text.trim() : !!o.url)) ||
@@ -168,8 +185,7 @@ export function FlowNode({ id, data, selected }: NodeProps) {
         () => ({} as { id?: string; error?: string }),
       );
       if (!res.ok || !j.id) {
-        const msg =
-          typeof j.error === "string" ? j.error : "Upload failed";
+        const msg = typeof j.error === "string" ? j.error : "Upload failed";
         toast(msg, "error");
         patch(id, { runStatus: "error", runError: msg });
         return;
@@ -214,159 +230,79 @@ export function FlowNode({ id, data, selected }: NodeProps) {
     }
   };
 
-  return (
-    <div
-      className={`kun-node group ${isSink ? "w-[340px]" : "w-[264px]"} st-${status} ${selected ? "is-selected" : ""}`}
-    >
-      {status === "running" && <span className="kun-shimmer" />}
-
-      {/* header */}
-      <header
-        className="flex h-9 items-center gap-2 border-b border-line/70 px-3"
-        title="Double-click to run"
-      >
-        <span
-          className="kun-dot h-1.5 w-1.5 shrink-0 rounded-full"
-          style={{ background: def.color }}
-        />
-        <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-ink">
-          {d.label || def.label}
-        </span>
-
-        {status !== "running" && (
+  const toolbar = (
+    <div className="kun-node__toolbar nodrag" role="toolbar" aria-label="Node actions">
+      {status !== "running" && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            emit("kun:run-node", id);
+          }}
+          className="kun-node__tool"
+          data-tone="run"
+          title="Run this node (or double-click it)"
+        >
+          <Play size={11} weight="fill" aria-hidden />
+          Run
+        </button>
+      )}
+      {status !== "running" && (
+        <>
           <button
+            type="button"
             onClick={(e) => {
               e.stopPropagation();
-              window.dispatchEvent(
-                new CustomEvent("kun:run-node", {
-                  detail: { nodeId: id },
-                }),
-              );
+              emit("kun:duplicate-node", id);
             }}
-            title="Run this node"
-            aria-label="Run this node"
-            className="nodrag -mr-0.5 flex h-5 w-5 items-center justify-center rounded text-faint opacity-0 transition focus-visible:opacity-100 hover:bg-white/5 hover:text-live group-hover:opacity-100"
+            className="kun-node__tool"
+            title="Duplicate node"
+            aria-label="Duplicate node"
           >
-            <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden>
-              <path d="M1.5 0.8 8.5 5 1.5 9.2Z" fill="currentColor" />
-            </svg>
+            <Copy size={13} weight="bold" aria-hidden />
           </button>
-        )}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              emit("kun:remove-node", id);
+            }}
+            className="kun-node__tool"
+            data-tone="danger"
+            title="Delete node"
+            aria-label="Delete node"
+          >
+            <Trash size={13} weight="bold" aria-hidden />
+          </button>
+        </>
+      )}
+    </div>
+  );
 
-        {status !== "running" && (
-          <>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                window.dispatchEvent(
-                  new CustomEvent("kun:duplicate-node", {
-                    detail: { nodeId: id },
-                  }),
-                );
-              }}
-              title="Duplicate node"
-              aria-label="Duplicate node"
-              className="nodrag flex h-5 w-5 items-center justify-center rounded text-faint opacity-0 transition focus-visible:opacity-100 hover:bg-white/5 hover:text-ink group-hover:opacity-100"
-            >
-              <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden>
-                <rect x="0.8" y="2.4" width="6" height="6" rx="1" stroke="currentColor" strokeWidth="1.2" fill="none" />
-                <path d="M3.2 2.4V1.6A.8.8 0 0 1 4 .8h4.4A.8.8 0 0 1 9.2 1.6V6a.8.8 0 0 1-.8.8H7.6" stroke="currentColor" strokeWidth="1.2" fill="none" />
-              </svg>
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                window.dispatchEvent(
-                  new CustomEvent("kun:remove-node", {
-                    detail: { nodeId: id },
-                  }),
-                );
-              }}
-              title="Delete node"
-              aria-label="Delete node"
-              className="nodrag flex h-5 w-5 items-center justify-center rounded text-faint opacity-0 transition focus-visible:opacity-100 hover:bg-white/5 hover:text-err group-hover:opacity-100"
-            >
-              <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden>
-                <path
-                  d="M1.5 1.5 6.5 6.5M6.5 1.5 1.5 6.5"
-                  stroke="currentColor"
-                  strokeWidth="1.2"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </button>
-          </>
-        )}
+  const renderHandle = (p: PortPlacement) => (
+    <Handle
+      key={`${p.side}-${p.port.id}`}
+      id={p.port.id}
+      type={p.side === "in" ? "target" : "source"}
+      position={p.side === "in" ? Position.Left : Position.Right}
+      style={handleStyle(p)}
+      title={`${p.port.label} (${PORT_NAME[p.port.type]})`}
+    />
+  );
 
-        <StatusMark status={status} />
-        {d.runUsage?.costUsd ? (
-          <span className="font-mono text-[9px] text-faint" title="Node cost">
-            {fmtUsd(d.runUsage.costUsd)}
-          </span>
-        ) : null}
-      </header>
-
-      {/* body */}
-      <div
-        className="relative px-3 pb-3"
-        style={{ paddingTop: def.inputs.length ? FIRST_ROW + def.inputs.length * ROW_H : 12 }}
-      >
-        {/* input ports */}
-        {def.inputs.map((p, i) => {
-          const mid = FIRST_ROW + i * ROW_H;
-          return (
-            <span key={p.id}>
-              <Handle
-                id={p.id}
-                type="target"
-                position={Position.Left}
-                style={{
-                  background: PORT_COLORS[p.type],
-                  left: -HANDLE / 2,
-                  top: mid - HANDLE / 2,
-                }}
-                title={`${p.label} (${p.type})`}
-              />
-              <span
-                className="pointer-events-none absolute left-4 flex h-4 items-center font-mono text-[9px] uppercase tracking-[0.14em] text-faint"
-                style={{ top: mid - 8 }}
-              >
-                {p.label}
-              </span>
-            </span>
-          );
-        })}
-
-        {/* output ports — single is centered; multiple stack like inputs */}
-        {def.outputs.map((p, i) => {
-          const many = def.outputs.length > 1;
-          const mid = many ? FIRST_ROW + i * ROW_H : null;
-          return (
-            <span key={p.id}>
-              <Handle
-                id={p.id}
-                type="source"
-                position={Position.Right}
-                style={{
-                  background: PORT_COLORS[p.type],
-                  right: -HANDLE / 2,
-                  top: mid !== null ? mid - HANDLE / 2 : "50%",
-                  marginTop: mid !== null ? 0 : -HANDLE / 2,
-                }}
-                title={`${p.label} (${p.type})`}
-              />
-              {many && (
-                <span
-                  className="pointer-events-none absolute right-4 flex h-4 items-center font-mono text-[9px] uppercase tracking-[0.14em] text-faint"
-                  style={{ top: mid! - 8 }}
-                >
-                  {p.label}
-                </span>
-              )}
-            </span>
-          );
-        })}
-
+  return (
+    <NodeFrame
+      def={def}
+      label={d.label}
+      status={status}
+      selected={selected}
+      wide={isSink}
+      cost={d.runUsage?.costUsd ? fmtUsd(d.runUsage.costUsd) : null}
+      connected={connected}
+      renderHandle={renderHandle}
+      toolbar={toolbar}
+    >
+      <div className="space-y-2">
         {/* source editors */}
         {(d.kind === "text" || d.kind === "note") && (
           <textarea
@@ -377,7 +313,7 @@ export function FlowNode({ id, data, selected }: NodeProps) {
               d.kind === "note" ? "Instruction…" : "Paste text or an article…"
             }
             rows={d.kind === "note" ? 2 : 5}
-            className="nodrag nowheel w-full resize-y rounded-md border border-line bg-sunken px-2 py-1.5 text-[12px] leading-relaxed text-ink/85 outline-none transition-colors placeholder:text-faint focus:border-line2"
+            className="kun-field nodrag nowheel resize-y"
           />
         )}
 
@@ -398,26 +334,22 @@ export function FlowNode({ id, data, selected }: NodeProps) {
               value={d.text ?? ""}
               onChange={(e) => patch(id, { text: e.target.value })}
               aria-label="Skill instructions"
-              placeholder="Skill instructions appear here — edit before wiring into an AI node…"
+              placeholder="Skill instructions appear here. Edit them before wiring into an AI node."
               rows={5}
-              className="nodrag nowheel mb-2 w-full resize-y rounded-md border border-line bg-sunken px-2 py-1.5 text-[12px] leading-relaxed text-ink/85 outline-none transition-colors placeholder:text-faint focus:border-line2"
+              className="kun-field nodrag nowheel resize-y"
             />
-            <div className="mb-2 grid grid-cols-2 gap-1.5">
+            <div className="flex flex-wrap gap-1.5">
               <button
                 type="button"
                 onClick={() => void saveSkillToLibrary(id, d)}
-                className="nodrag rounded-md border border-line px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-muted transition-colors hover:border-line2 hover:text-ink"
+                className="nodrag kun-chip-select"
               >
                 Save to library
               </button>
               <button
                 type="button"
-                onClick={() =>
-                  window.dispatchEvent(
-                    new CustomEvent("kun:expand-skill", { detail: { nodeId: id } }),
-                  )
-                }
-                className="nodrag rounded-md border border-line px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-muted transition-colors hover:border-line2 hover:text-ink"
+                onClick={() => emit("kun:expand-skill", id)}
+                className="nodrag kun-chip-select"
               >
                 Expand to image
               </button>
@@ -425,38 +357,30 @@ export function FlowNode({ id, data, selected }: NodeProps) {
           </>
         )}
 
-        {(d.kind === "llm" ||
-          d.kind === "image.gen" ||
-          d.kind === "video.gen" ||
-          d.kind === "tts") && (
-          <textarea
-            value={
-              d.kind === "tts" && !d.prompt?.trim()
-                ? incomingText
-                : (d.prompt ?? "")
-            }
-            onChange={(e) => patch(id, { prompt: e.target.value })}
-            aria-label="Prompt"
-            placeholder={
-              d.kind === "llm"
-                ? "What should the model do with the input…"
-                : d.kind === "image.gen"
-                  ? "Describe the image — or how to edit the reference…"
-                  : d.kind === "tts"
-                    ? incomingText
-                      ? "Connected text will be spoken…"
-                      : "Text to speak…"
+        {d.kind === "tts" ? (
+          <TtsPrompt id={id} value={d.prompt ?? ""} />
+        ) : (
+          (d.kind === "llm" ||
+            d.kind === "image.gen" ||
+            d.kind === "video.gen") && (
+            <textarea
+              value={d.prompt ?? ""}
+              onChange={(e) => patch(id, { prompt: e.target.value })}
+              aria-label="Prompt"
+              placeholder={
+                d.kind === "llm"
+                  ? "What should the model do with the input…"
+                  : d.kind === "image.gen"
+                    ? "Describe the image, or how to edit the reference…"
                     : "Describe what to generate…"
-            }
-            rows={3}
-            className="nodrag nowheel mb-2 w-full resize-y rounded-md border border-line bg-sunken px-2 py-1.5 text-[12px] leading-relaxed text-ink/85 outline-none transition-colors placeholder:text-faint focus:border-line2"
-          />
+              }
+              rows={3}
+              className="kun-field nodrag nowheel resize-y"
+            />
+          )
         )}
 
-        {(d.kind === "llm" ||
-          d.kind === "image.gen" ||
-          d.kind === "video.gen" ||
-          d.kind === "tts") && (
+        {isAi && (
           <SkillPicker
             compact
             value={d.skillId}
@@ -464,174 +388,19 @@ export function FlowNode({ id, data, selected }: NodeProps) {
           />
         )}
 
-        {def.models && def.models.length > 0 && (() => {
-          const suggested = def.models ?? [];
-          const need = kindForNode(d.kind);
-          const seen = new Set<string>();
-          const groups: { provider: string; label: string; items: ModelInfo[] }[] =
-            [];
-
-          const addGroup = (
-            provider: string,
-            label: string,
-            items: ModelInfo[],
-          ) => {
-            const unique = items.filter((m) => {
-              if (seen.has(m.id)) return false;
-              seen.add(m.id);
-              return true;
-            });
-            if (unique.length) groups.push({ provider, label, items: unique });
-          };
-
-          // Recently used first — a personal, always-current basis, unlike
-          // the curated suggestions. Labels come from the record, the live
-          // list, or the suggestions, so a retired model keeps its name.
-          const liveById = new Map((live ?? []).map((m) => [m.id, m.label]));
-          addGroup(
-            "recent",
-            "Recent",
-            recents.map((r) => ({
-              id: r.id,
-              label:
-                r.label ??
-                liveById.get(r.id) ??
-                suggested.find((s) => s.id === r.id)?.label ??
-                r.id,
-            })),
-          );
-
-          addGroup("suggested", "Suggested", suggested);
-
-          if (need) {
-            for (const g of groupModels(
-              filterModels(cat.models.openrouter ?? [], need),
-            )) {
-              addGroup(g.provider, g.label, g.items);
-            }
-          }
-
-          const knownIds = [...seen];
-          const orphanGateway =
-            !!d.provider && d.provider !== "openrouter" && !!d.model;
-          const showCustom =
-            !orphanGateway &&
-            (customModel || (!!d.model && !knownIds.includes(d.model)));
-
-          // Suggested and recent ids are OpenRouter's namespace, so only
-          // they can be checked against its live list — gateway ids are
-          // their own.
-          const listedIds = live ? new Set(live.map((m) => m.id)) : null;
-          const orGone = "no longer listed by OpenRouter";
-          const retiredNote = new Map<string, string>();
-          if (listedIds) {
-            for (const s of suggested)
-              if (!listedIds.has(s.id)) retiredNote.set(s.id, orGone);
-            for (const r of recents)
-              if (
-                (!r.provider || r.provider === "openrouter") &&
-                !listedIds.has(r.id)
-              )
-                retiredNote.set(r.id, orGone);
-          }
-
-
-          const pickModel = (value: string) => {
-            if (value === CUSTOM_MODEL) {
-              setCustomModel(true);
-              patch(id, { model: "", provider: "openrouter" });
-              return;
-            }
-            const listed = voicesForModel(cat.models, value);
-            const provider = "openrouter";
-            const voice = resolveVoice(value, d.voice, listed);
-            patch(id, {
-              model: value,
-              provider,
-              ...(d.kind === "tts" ? { voice } : {}),
-            });
-            recordRecent(d.kind, {
-              id: value,
-              provider: provider === "openrouter" ? undefined : provider,
-              label: groups
-                .flatMap((g) => g.items)
-                .find((m) => m.id === value)?.label,
-            });
-          };
-
-          return (
-            <>
-              {orphanGateway || showCustom ? (
-                <div className="relative mb-2">
-                  <input
-                    value={d.model ?? ""}
-                    onChange={(e) => patch(id, { model: e.target.value })}
-                    autoComplete="off"
-                    spellCheck={false}
-                    aria-label="Custom model id"
-                    placeholder={
-                      orphanGateway
-                        ? "gateway offline — model id kept…"
-                        : "provider/model — any OpenRouter id…"
-                    }
-                    title={
-                      orphanGateway
-                        ? "Saved gateway model — it will run through its provider when reachable"
-                        : undefined
-                    }
-                    className="nodrag w-full rounded-md border border-accent/40 bg-sunken px-2 py-1.5 pr-7 font-mono text-[10.5px] text-ink/85 outline-none transition-colors placeholder:text-faint focus:border-accent"
-                  />
-                  {!orphanGateway && (
-                    <button
-                      onClick={() => {
-                        setCustomModel(false);
-                        patch(id, {
-                          model: defaultModel || knownIds[0],
-                          provider: "openrouter",
-                        });
-                      }}
-                      title="Back to preset models"
-                      aria-label="Back to preset models"
-                      className="absolute right-1.5 top-1/2 flex h-4 w-4 -translate-y-1/2 items-center justify-center rounded text-faint transition-colors hover:bg-white/5 hover:text-muted"
-                    >
-                      <svg width="8" height="8" viewBox="0 0 8 8" aria-hidden>
-                        <path d="M1.5 1.5 6.5 6.5M6.5 1.5 1.5 6.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <select
-                  value={d.model ?? defaultModel}
-                  onChange={(e) => pickModel(e.target.value)}
-                  className="nodrag mb-2 w-full rounded-md border border-line bg-sunken px-2 py-1.5 font-mono text-[10.5px] text-muted outline-none transition-colors focus:border-line2"
-                >
-                  {groups.map((g) => (
-                    <optgroup key={`${g.provider}-${g.label}`} label={g.label}>
-                      {g.items.map((m) => {
-                        const note = retiredNote.get(m.id);
-                        return (
-                          <option
-                            key={m.id}
-                            value={m.id}
-                            disabled={!!note}
-                            title={note ? `${m.id} — ${note}` : m.id}
-                          >
-                            {modelName(m)}
-                          </option>
-                        );
-                      })}
-                    </optgroup>
-                  ))}
-                  <option value={CUSTOM_MODEL}>Custom model…</option>
-                </select>
-              )}
-            </>
-          );
-        })()}
+        {def.models && def.models.length > 0 && (
+          <ModelPicker
+            id={id}
+            d={d}
+            def={def}
+            defaultModel={defaultModel}
+            recents={recents}
+            live={live}
+          />
+        )}
 
         {d.kind === "image.gen" && (
-          <div className="mb-2 grid grid-cols-2 gap-1.5">
+          <div className="flex flex-wrap gap-1.5">
             <OptionalParam
               value={d.aspectRatio}
               onChange={(aspectRatio) =>
@@ -641,8 +410,8 @@ export function FlowNode({ id, data, selected }: NodeProps) {
                 })
               }
               options={IMAGE_ASPECTS}
-              autoLabel="Aspect · Auto"
-              customPlaceholder="W:H — 16:9"
+              autoLabel="Aspect: Auto"
+              customPlaceholder="W:H, e.g. 16:9"
             />
             <OptionalParam
               value={d.size}
@@ -653,67 +422,67 @@ export function FlowNode({ id, data, selected }: NodeProps) {
                 })
               }
               options={IMAGE_SIZES}
-              autoLabel="Size · Auto"
+              autoLabel="Size: Auto"
               customPlaceholder="1024x1024"
             />
           </div>
         )}
 
         {d.kind === "video.gen" && (
-          <div className="mb-2 space-y-1.5">
-            <div className="grid grid-cols-2 gap-1.5">
-              <OptionalParam
-                value={d.duration != null ? String(d.duration) : undefined}
-                onChange={(raw) =>
-                  patch(id, {
-                    duration: raw ? Number(raw) || undefined : undefined,
-                  })
-                }
-                options={VIDEO_DURATIONS}
-                autoLabel="Length · Auto"
-                customPlaceholder="Seconds"
-              />
-              <OptionalParam
-                value={d.aspectRatio}
-                onChange={(aspectRatio) => patch(id, { aspectRatio })}
-                options={VIDEO_ASPECTS}
-                autoLabel="Aspect · Auto"
-                customPlaceholder="W:H — 16:9"
-              />
-            </div>
+          <div className="flex flex-wrap gap-1.5">
+            <OptionalParam
+              value={d.duration != null ? String(d.duration) : undefined}
+              onChange={(raw) =>
+                patch(id, {
+                  duration: raw ? Number(raw) || undefined : undefined,
+                })
+              }
+              options={VIDEO_DURATIONS}
+              autoLabel="Length: Auto"
+              customPlaceholder="Seconds"
+            />
+            <OptionalParam
+              value={d.aspectRatio}
+              onChange={(aspectRatio) => patch(id, { aspectRatio })}
+              options={VIDEO_ASPECTS}
+              autoLabel="Aspect: Auto"
+              customPlaceholder="W:H, e.g. 16:9"
+            />
             <OptionalParam
               value={d.resolution}
               onChange={(resolution) => patch(id, { resolution })}
               options={VIDEO_RESOLUTIONS}
-              autoLabel="Resolution · Auto"
+              autoLabel="Resolution: Auto"
               customPlaceholder="1920x1080"
             />
           </div>
         )}
 
         {d.kind === "tts" && (
-          <OptionalParam
-            value={d.voice}
-            onChange={(voice) => patch(id, { voice })}
-            options={voiceChoices(
-              d.model ?? defaultModel,
-              voicesForModel(cat.models, d.model ?? defaultModel),
-            )}
-            autoLabel="Voice · Auto"
-            customPlaceholder="this model's voice id"
-            className="mb-2"
-          />
+          <div className="flex flex-wrap gap-1.5">
+            <OptionalParam
+              value={d.voice}
+              onChange={(voice) => patch(id, { voice })}
+              options={voiceChoices(
+                d.model ?? defaultModel,
+                voicesForModel(cat.models, d.model ?? defaultModel),
+              )}
+              autoLabel="Voice: Auto"
+              customPlaceholder="This model's voice id"
+            />
+          </div>
         )}
 
         {/* media input */}
         {isMediaIn && (
           <label
-            className={`nodrag flex cursor-pointer items-center justify-center rounded-md border border-dashed bg-sunken px-2 py-2.5 font-mono text-[10px] uppercase tracking-[0.14em] transition-colors ${
+            className={`nodrag flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed bg-sunken px-3 py-3 text-[12px] transition-colors ${
               upl
                 ? "border-live/50 text-live"
-                : "border-line2 text-muted hover:border-accent/60 hover:text-ink"
+                : "border-line2 text-muted hover:border-ink/40 hover:text-ink"
             }`}
           >
+            <UploadSimple size={14} weight="bold" aria-hidden />
             {upl ? "Uploading…" : d.artifactId ? "Replace file" : "Choose file"}
             <input
               type="file"
@@ -739,40 +508,63 @@ export function FlowNode({ id, data, selected }: NodeProps) {
           />
         )}
 
-        {/* ---------------------------------------------------------------
-            Output. Renders whatever arrived — pages, apps, prose, JSON,
-            media — processing nodes stay clean; results live here only.
-        ---------------------------------------------------------------- */}
+        {/* Latest result of an AI node, so a graph reads at a glance. */}
+        {isAi && (hasContent || status === "running") && (
+          <ResultPreview
+            outputs={outputs}
+            streaming={status === "running" ? streaming : ""}
+            running={status === "running"}
+          />
+        )}
+
+        {/* Output sinks render whatever arrived: pages, apps, prose, JSON,
+            media. */}
         {isSink &&
           (hasContent ? (
             <div key={sig} className="kun-rise space-y-2.5">
               <div className="flex items-center justify-between px-0.5">
-                <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-faint">
+                <span className="text-[11px] text-faint">
                   {status === "running" && streaming
-                    ? "streaming…"
+                    ? "Streaming…"
                     : describeOutputs(outputs)}
                 </span>
-                <div className="flex items-center gap-2">
-                  {outputs.some((o) => o.type !== "text" ? !!o.url : !!o.text?.trim()) && (
+                <div className="flex items-center gap-1">
+                  {outputs.some((o) =>
+                    o.type !== "text" ? !!o.url : !!o.text?.trim(),
+                  ) && (
                     <button
+                      type="button"
                       onClick={() => downloadOutputs(outputs)}
                       title="Download output"
-                      className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted transition-colors hover:text-live"
+                      className="nodrag kun-node__tool"
                     >
-                      Download
+                      <DownloadSimple size={13} weight="bold" aria-hidden />
+                      Save
                     </button>
                   )}
                   <button
-                    onClick={() => copy(outputs.map((o) => (o.type === "text" ? o.text : o.url ?? "")).join("\n\n"))}
+                    type="button"
+                    onClick={() =>
+                      copy(
+                        outputs
+                          .map((o) => (o.type === "text" ? o.text : (o.url ?? "")))
+                          .join("\n\n"),
+                      )
+                    }
                     title="Copy raw output"
-                    className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted transition-colors hover:text-live"
+                    className="nodrag kun-node__tool"
                   >
-                    {copied ? "Copied ✓" : "Copy"}
+                    {copied ? (
+                      <Check size={13} weight="bold" aria-hidden />
+                    ) : (
+                      <Copy size={13} weight="bold" aria-hidden />
+                    )}
+                    {copied ? "Copied" : "Copy"}
                   </button>
                 </div>
               </div>
               {status === "running" && streaming ? (
-                <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-line bg-sunken px-2.5 py-2 font-mono text-[10.5px] leading-relaxed text-ink/80">
+                <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-line bg-sunken px-3 py-2.5 font-mono text-[11px] leading-relaxed text-ink/85">
                   {streaming}
                   <span className="kun-caret" aria-hidden />
                 </pre>
@@ -786,32 +578,57 @@ export function FlowNode({ id, data, selected }: NodeProps) {
               )}
             </div>
           ) : status === "running" || status === "queued" ? (
-            <div className="flex items-center gap-2 py-3 font-mono text-[10px] uppercase tracking-[0.14em] text-faint">
-              <Spinner className="text-live" />
-              Awaiting results…
+            <div className="flex items-center gap-2 py-3 text-[12px] text-faint">
+              <span className="kun-eq text-live" aria-hidden>
+                <span />
+                <span />
+                <span />
+              </span>
+              Waiting for results…
             </div>
           ) : (
-            <div className="rounded-lg border border-dashed border-line px-3 py-5 text-center">
-              <p className="text-[12px] text-muted">No output yet.</p>
-              <p className="mt-0.5 text-[11px] text-faint">
-                Connect upstream and run — or chain this node onward.
+            <div className="rounded-xl border border-dashed border-line2 px-3 py-5 text-center">
+              <p className="text-[12.5px] text-muted">No output yet</p>
+              <p className="mt-0.5 text-[11.5px] text-faint">
+                Connect something upstream, then run.
               </p>
             </div>
           ))}
 
         {status === "error" && (
-          <div className="mt-2 rounded-md border border-err/40 bg-err/10 px-2.5 py-2 text-[11px] leading-snug text-err">
+          <div className="rounded-xl border border-err/40 bg-err/10 px-3 py-2 text-[11.5px] leading-snug text-err">
             {d.runError}
           </div>
         )}
 
         {status === "skipped" && (
-          <div className="mt-2 rounded-md border border-dashed border-line px-2.5 py-2 text-[11px] leading-snug text-faint">
+          <div className="rounded-xl border border-dashed border-line2 px-3 py-2 text-[11.5px] leading-snug text-faint">
             {d.runError ?? "Skipped."}
           </div>
         )}
       </div>
-    </div>
+    </NodeFrame>
+  );
+}
+
+/**
+ * Speech prompts fall back to whatever text arrives on the input. That needs
+ * a subscription to every node and edge, so it lives here and only mounts for
+ * speech nodes instead of taxing every card on the canvas.
+ */
+function TtsPrompt({ id, value }: { id: string; value: string }) {
+  const incoming = useIncomingText(id);
+  return (
+    <textarea
+      value={value.trim() ? value : incoming}
+      onChange={(e) => patch(id, { prompt: e.target.value })}
+      aria-label="Prompt"
+      placeholder={
+        incoming ? "Connected text will be spoken…" : "Text to speak…"
+      }
+      rows={3}
+      className="kun-field nodrag nowheel resize-y"
+    />
   );
 }
 
@@ -858,20 +675,236 @@ function voicesForModel(
   }
 }
 
+function ModelPicker({
+  id,
+  d,
+  def,
+  defaultModel,
+  recents,
+  live,
+}: {
+  id: string;
+  d: FlowNodeData;
+  def: NodeTypeDef;
+  defaultModel: string;
+  recents: RecentModel[];
+  live: ModelInfo[] | null;
+}) {
+  const cat = useCatalog();
+  const [customModel, setCustomModel] = useState(false);
+
+  const suggested = def.models ?? [];
+  const need = kindForNode(d.kind);
+  const seen = new Set<string>();
+  const groups: { provider: string; label: string; items: ModelInfo[] }[] = [];
+
+  const addGroup = (provider: string, label: string, items: ModelInfo[]) => {
+    const unique = items.filter((m) => {
+      if (seen.has(m.id)) return false;
+      seen.add(m.id);
+      return true;
+    });
+    if (unique.length) groups.push({ provider, label, items: unique });
+  };
+
+  // Recently used first: a personal, always-current basis, unlike the curated
+  // suggestions. Labels come from the record, the live list, or the
+  // suggestions, so a retired model keeps its name.
+  const liveById = new Map((live ?? []).map((m) => [m.id, m.label]));
+  addGroup(
+    "recent",
+    "Recent",
+    recents.map((r) => ({
+      id: r.id,
+      label:
+        r.label ??
+        liveById.get(r.id) ??
+        suggested.find((s) => s.id === r.id)?.label ??
+        r.id,
+    })),
+  );
+
+  addGroup("suggested", "Suggested", suggested);
+
+  if (need) {
+    for (const g of groupModels(filterModels(cat.models.openrouter ?? [], need))) {
+      addGroup(g.provider, g.label, g.items);
+    }
+  }
+
+  const knownIds = [...seen];
+  const orphanGateway = !!d.provider && d.provider !== "openrouter" && !!d.model;
+  const showCustom =
+    !orphanGateway && (customModel || (!!d.model && !knownIds.includes(d.model)));
+
+  // Suggested and recent ids are OpenRouter's namespace, so only they can be
+  // checked against its live list. Gateway ids are their own.
+  const listedIds = live ? new Set(live.map((m) => m.id)) : null;
+  const orGone = "no longer listed by OpenRouter";
+  const retiredNote = new Map<string, string>();
+  if (listedIds) {
+    for (const s of suggested)
+      if (!listedIds.has(s.id)) retiredNote.set(s.id, orGone);
+    for (const r of recents)
+      if ((!r.provider || r.provider === "openrouter") && !listedIds.has(r.id))
+        retiredNote.set(r.id, orGone);
+  }
+
+  const pickModel = (value: string) => {
+    if (value === CUSTOM_MODEL) {
+      setCustomModel(true);
+      patch(id, { model: "", provider: "openrouter" });
+      return;
+    }
+    const listed = voicesForModel(cat.models, value);
+    const provider = "openrouter";
+    const voice = resolveVoice(value, d.voice, listed);
+    patch(id, {
+      model: value,
+      provider,
+      ...(d.kind === "tts" ? { voice } : {}),
+    });
+    recordRecent(d.kind, {
+      id: value,
+      provider: provider === "openrouter" ? undefined : provider,
+      label: groups.flatMap((g) => g.items).find((m) => m.id === value)?.label,
+    });
+  };
+
+  if (orphanGateway || showCustom) {
+    return (
+      <div className="relative">
+        <input
+          value={d.model ?? ""}
+          onChange={(e) => patch(id, { model: e.target.value })}
+          autoComplete="off"
+          spellCheck={false}
+          aria-label="Custom model id"
+          placeholder={
+            orphanGateway
+              ? "Gateway offline, model id kept…"
+              : "provider/model (any OpenRouter id)…"
+          }
+          title={
+            orphanGateway
+              ? "Saved gateway model. It will run through its provider when reachable."
+              : undefined
+          }
+          className="kun-field nodrag pr-8 font-mono text-[11px]"
+        />
+        {!orphanGateway && (
+          <button
+            type="button"
+            onClick={() => {
+              setCustomModel(false);
+              patch(id, {
+                model: defaultModel || knownIds[0],
+                provider: "openrouter",
+              });
+            }}
+            title="Back to preset models"
+            aria-label="Back to preset models"
+            className="nodrag absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-faint transition-colors hover:bg-ink/10 hover:text-ink"
+          >
+            <X size={10} weight="bold" aria-hidden />
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <select
+      value={d.model ?? defaultModel}
+      onChange={(e) => pickModel(e.target.value)}
+      aria-label="Model"
+      className="kun-chip-select nodrag w-full"
+    >
+      {groups.map((g) => (
+        <optgroup key={`${g.provider}-${g.label}`} label={g.label}>
+          {g.items.map((m) => {
+            const note = retiredNote.get(m.id);
+            return (
+              <option
+                key={m.id}
+                value={m.id}
+                disabled={!!note}
+                title={note ? `${m.id}: ${note}` : m.id}
+              >
+                {modelName(m)}
+              </option>
+            );
+          })}
+        </optgroup>
+      ))}
+      <option value={CUSTOM_MODEL}>Custom model…</option>
+    </select>
+  );
+}
+
+function ResultPreview({
+  outputs,
+  streaming,
+  running,
+}: {
+  outputs: NodeOutput[];
+  streaming: string;
+  running: boolean;
+}) {
+  const media = outputs.filter(
+    (o): o is Exclude<NodeOutput, { type: "text" }> =>
+      o.type !== "text" && !!o.url,
+  );
+  const text = outputs
+    .filter((o): o is Extract<NodeOutput, { type: "text" }> => o.type === "text")
+    .map((o) => o.text)
+    .join("\n")
+    .trim();
+
+  if (running && streaming) {
+    return (
+      <pre className="kun-rise max-h-28 overflow-hidden whitespace-pre-wrap break-words rounded-xl border border-line bg-sunken px-3 py-2 font-mono text-[11px] leading-relaxed text-ink/85">
+        {streaming.slice(-420)}
+        <span className="kun-caret" aria-hidden />
+      </pre>
+    );
+  }
+  if (running && !media.length && !text) return null;
+
+  return (
+    <div className="kun-rise space-y-1.5">
+      {media.map((o, i) => (
+        <OutputRenderer key={i} output={o} />
+      ))}
+      {text && (
+        <div className="flex items-start gap-2 rounded-xl border border-line bg-sunken px-3 py-2">
+          <p className="line-clamp-4 min-w-0 flex-1 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-ink/85">
+            {text}
+          </p>
+          <ArrowSquareOut
+            size={12}
+            weight="bold"
+            className="mt-0.5 shrink-0 text-faint"
+            aria-label="Full text appears on an Output node"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OptionalParam({
   value,
   onChange,
   options,
   autoLabel,
   customPlaceholder,
-  className = "",
 }: {
   value?: string;
   onChange: (next?: string) => void;
   options: readonly { value: string; label: string }[];
   autoLabel: string;
   customPlaceholder?: string;
-  className?: string;
 }) {
   const [forceCustom, setForceCustom] = useState(false);
   const known = options.some((o) => o.value === value);
@@ -879,7 +912,7 @@ function OptionalParam({
   const selectValue = custom ? CUSTOM_PARAM : (value ?? "");
 
   return (
-    <div className={`min-w-0 ${className}`}>
+    <div className="min-w-0">
       <select
         value={selectValue}
         aria-label={autoLabel}
@@ -893,7 +926,7 @@ function OptionalParam({
           setForceCustom(false);
           onChange(next || undefined);
         }}
-        className="nodrag w-full rounded-md border border-line bg-sunken px-2 py-1.5 font-mono text-[10.5px] text-muted outline-none transition-colors focus:border-line2"
+        className="kun-chip-select nodrag"
       >
         <option value="">{autoLabel}</option>
         {options.map((o) => (
@@ -909,48 +942,11 @@ function OptionalParam({
           onChange={(e) => onChange(e.target.value.trim() || undefined)}
           spellCheck={false}
           placeholder={customPlaceholder}
-          className="nodrag mt-1 w-full rounded-md border border-accent/40 bg-sunken px-2 py-1.5 font-mono text-[10.5px] text-ink/85 outline-none transition-colors placeholder:text-faint focus:border-accent"
+          aria-label={`${autoLabel} (custom)`}
+          className="kun-field nodrag mt-1 font-mono text-[11px]"
         />
       )}
     </div>
-  );
-}
-
-function StatusMark({ status }: { status: string }) {
-  if (status === "running")
-    return <Spinner className="shrink-0 text-live" />;
-  const color =
-    status === "done"
-      ? "var(--color-ok)"
-      : status === "error"
-        ? "var(--color-err)"
-        : status === "queued"
-          ? "var(--color-live)"
-          : status === "skipped"
-            ? "var(--color-faint)"
-            : "var(--color-line2)";
-  return (
-    <span
-      className="kun-dot h-1.5 w-1.5 shrink-0 rounded-full"
-      style={{ background: color }}
-      title={status}
-    />
-  );
-}
-
-function Spinner({ className = "" }: { className?: string }) {
-  return (
-    <svg
-      className={`kun-spin shrink-0 ${className}`}
-      width="11"
-      height="11"
-      viewBox="0 0 12 12"
-      fill="none"
-      aria-hidden
-    >
-      <circle cx="6" cy="6" r="4.5" stroke="currentColor" strokeOpacity="0.25" strokeWidth="1.6" />
-      <path d="M6 1.5a4.5 4.5 0 0 1 4.5 4.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
   );
 }
 
@@ -964,7 +960,7 @@ function MediaPreview({ url, kind }: { url: string; kind: string }) {
         alt=""
         width={448}
         height={224}
-        className="nowheel mt-2 max-h-56 w-full rounded-md border border-line object-cover"
+        className="nowheel max-h-56 w-full rounded-xl border border-line object-cover"
       />
     );
   if (kind === "audio")
@@ -973,7 +969,7 @@ function MediaPreview({ url, kind }: { url: string; kind: string }) {
         controls
         preload="metadata"
         src={url.includes("?") ? `${url}&play=1` : `${url}?play=1`}
-        className="nodrag mt-2 w-full"
+        className="nodrag w-full"
       />
     );
   if (kind === "video")
@@ -983,7 +979,7 @@ function MediaPreview({ url, kind }: { url: string; kind: string }) {
         playsInline
         preload="metadata"
         src={url}
-        className="nowheel mt-2 max-h-56 w-full rounded-md border border-line bg-black"
+        className="nowheel max-h-56 w-full rounded-xl border border-line bg-black"
       />
     );
   return null;

@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { CaretDown } from "@phosphor-icons/react";
 import { ago, fmtCost, fmtDur } from "@/lib/format";
 import { readJson } from "@/lib/http";
 
 /**
- * Run history panel — recent runs of the current workbook with totals
- * (cost / tokens / duration / status), expandable to per-node rows.
+ * Run history for the current workbook, with totals (cost, tokens, duration,
+ * status) that expand into per-node rows.
  */
 
 interface RunRow {
@@ -32,6 +33,14 @@ interface RunNodeRow {
   durationMs: number | null;
   error: string | null;
 }
+
+const TRIGGER: Record<string, string> = {
+  node: "Single node",
+  manual: "Full run",
+  api: "API",
+  cron: "Schedule",
+  webhook: "Webhook",
+};
 
 export function RunsPanel({
   graphId,
@@ -86,107 +95,117 @@ export function RunsPanel({
 
   if (!graphId)
     return (
-      <p className="px-3 py-2 text-[11.5px] text-faint">
+      <p className="px-4 py-6 text-[13px] text-faint">
         Save the workbook to collect run history.
       </p>
     );
 
   if (failed)
     return (
-      <p className="px-3 py-2 text-[11.5px] text-err">
-        Couldn’t load run history.
-      </p>
+      <p className="px-4 py-6 text-[13px] text-err">Couldn’t load run history.</p>
     );
 
   if (!runs.length)
     return (
-      <p className="px-3 py-2 text-[11.5px] text-faint">No runs yet.</p>
+      <div className="px-4 py-10 text-center">
+        <p className="text-[14px] font-medium text-ink">No runs yet</p>
+        <p className="mt-1 text-[13px] text-muted">
+          Press Run and the history lands here.
+        </p>
+      </div>
     );
 
   return (
-    <div className="py-1">
-      {runs.map((r) => (
-        <div key={r.id}>
-          <button
-            onClick={() => expand(r.id)}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-white/[0.05]"
-          >
-            <span
-              className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                r.status === "done"
-                  ? "bg-ok"
-                  : r.status === "error"
-                    ? "bg-err"
-                    : "bg-live"
-              }`}
-            />
-            <span className="min-w-0 flex-1 truncate font-mono text-[10px] uppercase tracking-wide text-ink/80">
-              {r.trigger === "node" ? "single node" : "full run"} ·{" "}
-              {r.totalTokens.toLocaleString()} tok
-            </span>
-            <span className="shrink-0 font-mono text-[9.5px] text-faint">
-              {fmtCost(r.totalCostUsd)} · {fmtDur(r.durationMs)} ·{" "}
-              {ago(r.startedAt)}
-            </span>
-          </button>
-          {open === r.id && (
-            <div className="border-b border-line/60 bg-sunken/40 px-3 py-2">
-              {r.error && (
-                <p className="mb-1 text-[10.5px] leading-snug text-err">
-                  {r.error}
-                </p>
-              )}
-              {nodeState[r.id] === "err" ? (
-                <p className="text-[10px] text-err">
-                  Couldn’t load node breakdown.
-                </p>
-              ) : (nodes[r.id] ?? []).length ? (
-                <table className="w-full font-mono text-[9.5px] text-muted">
-                  <thead>
-                    <tr className="text-faint">
-                      <th className="text-left font-normal">node</th>
-                      <th className="text-right font-normal">tokens</th>
-                      <th className="text-right font-normal">cost</th>
-                      <th className="text-right font-normal">time</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(nodes[r.id] ?? []).map((n) => (
-                      <tr
-                        key={n.id}
-                        className={
-                          n.status === "error"
-                            ? "text-err"
-                            : n.status === "skipped"
-                              ? "text-faint"
-                              : ""
-                        }
-                      >
-                        <td
-                          className="max-w-40 truncate py-px"
-                          title={n.model ?? ""}
-                        >
-                          {n.nodeId}
-                          {n.model ? ` · ${n.model}` : ""}
-                        </td>
-                        <td className="text-right">
-                          {n.tokensIn + n.tokensOut > 0
-                            ? `${(n.tokensIn + n.tokensOut).toLocaleString()}`
-                            : "—"}
-                        </td>
-                        <td className="text-right">{fmtCost(n.costUsd)}</td>
-                        <td className="text-right">{fmtDur(n.durationMs)}</td>
+    <ul>
+      {runs.map((r) => {
+        const expanded = open === r.id;
+        const tone =
+          r.status === "done"
+            ? "bg-ok"
+            : r.status === "error" || r.status === "timed_out"
+              ? "bg-err"
+              : r.status === "cancelled"
+                ? "bg-faint"
+                : "bg-live";
+        return (
+          <li key={r.id} className="border-b border-line last:border-b-0">
+            <button
+              type="button"
+              onClick={() => expand(r.id)}
+              aria-expanded={expanded}
+              className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-ink/[0.04]"
+            >
+              <span className={`h-2 w-2 shrink-0 rounded-full ${tone}`} aria-hidden />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] font-medium text-ink">
+                  {TRIGGER[r.trigger] ?? r.trigger}
+                </span>
+                <span className="block truncate text-[12px] text-muted">
+                  {fmtCost(r.totalCostUsd)} / {fmtDur(r.durationMs)} /{" "}
+                  {r.totalTokens.toLocaleString()} tokens
+                </span>
+              </span>
+              <span className="shrink-0 text-[12px] text-faint">
+                {ago(r.startedAt)}
+              </span>
+              <CaretDown
+                size={12}
+                weight="bold"
+                className={`shrink-0 text-faint transition-transform ${expanded ? "rotate-180" : ""}`}
+                aria-hidden
+              />
+            </button>
+            {expanded && (
+              <div className="border-t border-line/70 bg-sunken/50 px-4 py-3">
+                {r.error && (
+                  <p className="mb-2 text-[12px] leading-snug text-err">{r.error}</p>
+                )}
+                {nodeState[r.id] === "err" ? (
+                  <p className="text-[12px] text-err">Couldn’t load node breakdown.</p>
+                ) : (nodes[r.id] ?? []).length ? (
+                  <table className="w-full text-[11.5px] text-muted">
+                    <thead>
+                      <tr className="text-left text-faint">
+                        <th scope="col" className="pb-1.5 font-medium">
+                          Node
+                        </th>
+                        <th scope="col" className="pb-1.5 text-right font-medium">
+                          Cost
+                        </th>
+                        <th scope="col" className="pb-1.5 text-right font-medium">
+                          Time
+                        </th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : (
-                <p className="text-[10px] text-faint">loading…</p>
-              )}
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
+                    </thead>
+                    <tbody className="font-mono tabular-nums">
+                      {(nodes[r.id] ?? []).map((n) => (
+                        <tr
+                          key={n.id}
+                          className={
+                            n.status === "error"
+                              ? "text-err"
+                              : n.status === "skipped"
+                                ? "text-faint"
+                                : ""
+                          }
+                        >
+                          <td className="max-w-36 truncate py-0.5" title={n.model ?? ""}>
+                            {n.nodeId}
+                          </td>
+                          <td className="text-right">{fmtCost(n.costUsd)}</td>
+                          <td className="text-right">{fmtDur(n.durationMs)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p className="text-[12px] text-faint">Loading…</p>
+                )}
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }
