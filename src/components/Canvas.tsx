@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -117,7 +118,9 @@ export function Canvas({
   const [consoleCollapsed, setConsoleCollapsed] = useState(false);
   useEffect(() => {
     try {
+      // Restored after mount so the server and first client render agree.
       if (sessionStorage.getItem("kun.console.collapsed") === "1")
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setConsoleCollapsed(true);
     } catch {
       /* ignore */
@@ -167,14 +170,17 @@ export function Canvas({
   const inflightRef = useRef(new Set<AbortController>());
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
-  nodesRef.current = nodes;
-  edgesRef.current = edges;
   const stoppingRef = useRef(false);
   const watchAbortRef = useRef<AbortController | null>(null);
   const activeRunIdRef = useRef<string | null>(null);
   const attachRunRef = useRef<(id: string) => Promise<void>>(async () => {});
   const rf = useReactFlow();
-  activeRunIdRef.current = activeRunId;
+  // Latest-value refs for callbacks; synced before any passive effect runs.
+  useLayoutEffect(() => {
+    nodesRef.current = nodes;
+    edgesRef.current = edges;
+    activeRunIdRef.current = activeRunId;
+  });
 
   useEffect(() => {
     let alive = true;
@@ -388,9 +394,11 @@ export function Canvas({
   }, [dirty, doc, save, ready]);
 
   const dirtyRef = useRef(dirty);
-  dirtyRef.current = dirty;
   const saveRef = useRef(save);
-  saveRef.current = save;
+  useLayoutEffect(() => {
+    dirtyRef.current = dirty;
+    saveRef.current = save;
+  });
   useEffect(() => {
     return () => {
       if (dirtyRef.current) void saveRef.current();
@@ -875,7 +883,9 @@ export function Canvas({
     },
     [applyRunEvent, resetInFlight],
   );
-  attachRunRef.current = attachRun;
+  useLayoutEffect(() => {
+    attachRunRef.current = attachRun;
+  });
 
   const run = useCallback(
     async (from?: string) => {

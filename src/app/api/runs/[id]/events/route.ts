@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { runs } from "@/db/schema";
-import { requireActor } from "@/lib/auth";
+import { fail, requireActor } from "@/lib/auth";
 import { eventsAfter } from "@/lib/runs/events";
 
 export const runtime = "nodejs";
@@ -12,7 +12,12 @@ export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const actor = await requireActor(req);
+  let actor;
+  try {
+    actor = await requireActor(req);
+  } catch (e) {
+    return fail(e);
+  }
   const { id } = await params;
   const [run] = await db.select().from(runs).where(eq(runs.id, id)).limit(1);
   if (!run || run.orgId !== actor.org.id) {

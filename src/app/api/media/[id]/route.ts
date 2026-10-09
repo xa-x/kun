@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
-import { and, eq, gt, isNull, or } from "drizzle-orm";
+import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { artifacts, runs, shares, type ArtifactRow } from "@/db/schema";
+import { artifacts, graphs, shares, type ArtifactRow } from "@/db/schema";
 import { resolveActor } from "@/lib/auth";
 import { objectStore } from "@/lib/storage";
 import { ensurePlayableAudio } from "@/lib/audio";
@@ -9,24 +9,22 @@ import { ensurePlayableAudio } from "@/lib/audio";
 export const runtime = "nodejs";
 
 /**
- * Anonymous access is allowed only when the artifact belongs to a graph with
- * an active share link — that is what /s/[token] view pages render.
+ * Outside the owning workspace, an artifact is readable only while a workbook
+ * that currently shows it has an active share link — that is exactly what the
+ * /s/[token] view renders, uploads and run outputs alike. Older runs of a
+ * shared workbook stay private.
  */
 async function reachableViaActiveShare(row: ArtifactRow) {
-  if (!row.runId) return false;
-  const [run] = await db
-    .select({ graphId: runs.graphId })
-    .from(runs)
-    .where(eq(runs.id, row.runId))
-    .limit(1);
-  if (!run) return false;
+  if (!row.orgId) return false;
   const [share] = await db
     .select({ id: shares.id })
     .from(shares)
+    .innerJoin(graphs, eq(graphs.id, shares.graphId))
     .where(
       and(
-        eq(shares.graphId, run.graphId),
+        eq(shares.orgId, row.orgId),
         or(isNull(shares.expiresAt), gt(shares.expiresAt, new Date())),
+        sql`${graphs.graph}::text like ${`%"${row.id}"%`}`,
       ),
     )
     .limit(1);
@@ -63,12 +61,11 @@ export async function GET(
   const [row] = await db.select().from(artifacts).where(eq(artifacts.id, id)).limit(1);
   if (!row) return new Response("not found", { status: 404 });
   const actor = await resolveActor(req).catch(() => null);
-  if (actor) {
-    if (row.orgId && row.orgId !== actor.org.id) {
-      return new Response("not found", { status: 404 });
-    }
-  } else if (!(await reachableViaActiveShare(row))) {
-    return new Response("unauthorized", { status: 401 });
+  const own = Boolean(actor && row.orgId && row.orgId === actor.org.id);
+  if (!own && !(await reachableViaActiveShare(row))) {
+    return actor
+      ? new Response("not found", { status: 404 })
+      : new Response("unauthorized", { status: 401 });
   }
 
   const raw = await objectStore.get(row.filename);
@@ -87,6 +84,10 @@ export async function GET(
   const headers: Record<string, string> = {
     "content-type": mime,
     "accept-ranges": "bytes",
+    // Media shares the app's origin: never let a file be sniffed into, or
+    // opened as, an active document.
+    "x-content-type-options": "nosniff",
+    "content-security-policy": "sandbox; default-src 'none'; media-src 'self'; img-src 'self'; style-src 'unsafe-inline'",
     "content-disposition": `${download ? "attachment" : "inline"}; filename="${name}"`,
     "cache-control":
       row.kind === "audio" || row.kind === "video"

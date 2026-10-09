@@ -44,6 +44,8 @@ export function AssistantPanel({
       const raw = sessionStorage.getItem(storageKey);
       if (!raw) return;
       const parsed = JSON.parse(raw) as ChatRow[];
+      // Restored after mount so the server and first client render agree.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (Array.isArray(parsed)) setRows(parsed);
     } catch {
       /* ignore */

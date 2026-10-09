@@ -13,6 +13,8 @@ import { listSkills } from "@/lib/skills";
 import { resolveProvider } from "@/lib/providers";
 import type { GraphDoc } from "@/lib/types";
 import { requireActor } from "@/lib/auth";
+import { assertWithinCredits } from "@/lib/runs/enqueue";
+import { meterModelCall } from "@/lib/metering";
 import { db } from "@/db";
 import { runNodes, runs } from "@/db/schema";
 
@@ -144,6 +146,14 @@ export async function POST(req: NextRequest) {
       headers: { "content-type": "application/json" },
     });
   }
+  try {
+    await assertWithinCredits(actor.org.id, actor.org.plan);
+  } catch (e) {
+    return new Response(
+      JSON.stringify({ error: e instanceof Error ? e.message : "plan limit" }),
+      { status: 402, headers: { "content-type": "application/json" } },
+    );
+  }
   const installedSkills = await listSkills(actor.org.id);
 
   let runContext = "(no recent run)";
@@ -248,6 +258,12 @@ Rules:
         if (!raw.trim()) {
           raw = (await result.text) ?? "";
         }
+        void meterModelCall(actor.org.id, "assistant", chatModel, {
+          usage: await Promise.resolve(result.usage).catch(() => undefined),
+          providerMetadata: await Promise.resolve(result.providerMetadata).catch(
+            () => undefined,
+          ),
+        });
 
         const parsed =
           parseAssistantOutput(extractJson(raw)) ??

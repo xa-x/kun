@@ -19,6 +19,7 @@
     "@supabase/supabase-js": "^2.117.2",
     "@xyflow/react": "^12.11.3",
     "ai": "^7.0.79",
+    "aws4fetch": "^1.0.20",
     "better-sqlite3": "^13.0.3",
     "drizzle-orm": "^0.45.2",
     "motion": "^14.0.0",

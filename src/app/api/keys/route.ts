@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { apiKeys } from "@/db/schema";
-import { fail, requireActor } from "@/lib/auth";
+import { fail, KEY_SCOPES, requireActor } from "@/lib/auth";
 import { canAdmin } from "@/lib/tenant";
 import { hashToken } from "@/lib/crypto";
 import { newId, newToken } from "@/lib/ids";
@@ -35,6 +35,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
     const body = await req.json().catch(() => ({}));
+    // Unknown scope names are dropped; asking for none keeps the full set.
+    const asked =
+      typeof body.scopes === "string"
+        ? body.scopes.split(",").map((s: string) => s.trim())
+        : [];
+    const scopes = KEY_SCOPES.filter((s) => asked.includes(s));
     const raw = `kun_${newToken(24)}`;
     const [row] = await db
       .insert(apiKeys)
@@ -45,7 +51,7 @@ export async function POST(req: NextRequest) {
         name: typeof body.name === "string" ? body.name : "API key",
         tokenHash: hashToken(raw),
         prefix: raw.slice(0, 10),
-        scopes: typeof body.scopes === "string" ? body.scopes : "run,read,mcp",
+        scopes: (scopes.length ? scopes : KEY_SCOPES).join(","),
       })
       .returning();
     return NextResponse.json({ id: row.id, token: raw, prefix: row.prefix }, { status: 201 });

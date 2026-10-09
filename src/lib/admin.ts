@@ -15,3 +15,19 @@ export function isPlatformAdmin(email?: string | null): boolean {
   if (!email) return false;
   return platformAdminEmails().includes(email.trim().toLowerCase());
 }
+
+/**
+ * While sign-up is closed, only these emails may get an account here:
+ * platform admins plus INVITED_EMAILS. Supabase's publishable key is public,
+ * so anyone can create an Auth user — this is what keeps them out of the app.
+ */
+export function isInvited(email?: string | null): boolean {
+  if (!email) return false;
+  const e = email.trim().toLowerCase();
+  if (isPlatformAdmin(e)) return true;
+  return (process.env.INVITED_EMAILS ?? "")
+    .split(",")
+    .map((x) => x.trim().toLowerCase())
+    .filter(Boolean)
+    .includes(e);
+}

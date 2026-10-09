@@ -56,7 +56,8 @@ export async function POST(req: NextRequest) {
     );
     runId = enq.run.id;
   } catch (e) {
-    const status = e instanceof PlanLimitError ? 402 : 400;
+    const status =
+      e instanceof PlanLimitError ? 402 : Number((e as { status?: number })?.status) || 400;
     return new Response(
       JSON.stringify({ error: e instanceof Error ? e.message : "enqueue failed" }),
       { status, headers: { "content-type": "application/json" } },

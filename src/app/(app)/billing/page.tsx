@@ -53,6 +53,10 @@ export default function BillingPage() {
   };
 
   const used = data ? Math.min(1, data.usage.runs / Math.max(1, data.usage.runLimit)) : 0;
+  // Ledger amounts are micro-dollars; the allowance is whole dollars.
+  const spent = data
+    ? Math.min(1, data.usage.amountUsd / 1e6 / Math.max(0.01, data.usage.creditAllowanceUsd))
+    : 0;
 
   return (
     <div className="mx-auto w-full max-w-5xl px-5 py-10 md:px-10 md:py-12">
@@ -106,12 +110,37 @@ export default function BillingPage() {
               </div>
             </div>
 
+            <div className="mt-5">
+              <div className="flex items-baseline justify-between text-[13px]">
+                <span className="text-muted">Model credits</span>
+                <span className="font-mono tabular-nums text-ink">
+                  {data.usage.amountUsd ? fmtCost(data.usage.amountUsd) : "$0.00"} / $
+                  {data.usage.creditAllowanceUsd.toFixed(2)}
+                </span>
+              </div>
+              <div
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={data.usage.creditAllowanceUsd}
+                aria-valuenow={data.usage.amountUsd / 1e6}
+                aria-label="Model credits used this month"
+                className="mt-2 h-2 overflow-hidden rounded-full bg-ink/10"
+              >
+                <div
+                  className={`h-full rounded-full transition-[width] ${spent > 0.9 ? "bg-warn" : "bg-ink"}`}
+                  style={{ width: `${Math.max(spent * 100, spent > 0 ? 2 : 0)}%` }}
+                />
+              </div>
+              <p className="mt-2 text-[12.5px] text-faint">
+                Runs pause for the month once either limit is reached.
+              </p>
+            </div>
+
             <dl className="mt-6 grid grid-cols-2 gap-6 border-t border-line pt-5">
               <div>
-                <dt className="text-[13px] text-muted">Model usage</dt>
+                <dt className="text-[13px] text-muted">Runs left</dt>
                 <dd className="mt-1 font-mono text-[18px] tabular-nums text-ink">
-                  {/* Ledger amounts are micro-dollars despite the field name. */}
-                  {fmtCost(data.usage.amountUsd)}
+                  {Math.max(0, data.usage.runLimit - data.usage.runs).toLocaleString()}
                 </dd>
               </div>
               <div>

@@ -5,9 +5,7 @@ function features(p: Plan): { label: string; on: boolean }[] {
   return [
     { label: `${p.monthlyRuns.toLocaleString()} runs a month`, on: true },
     {
-      label: p.monthlyCreditsUsd
-        ? `$${p.monthlyCreditsUsd} of model credits a month`
-        : "Pay for model usage as you go",
+      label: `$${p.monthlyCreditsUsd} of model credits a month`,
       on: true,
     },
     { label: "Cron schedules and webhooks", on: p.schedules },

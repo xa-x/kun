@@ -13,11 +13,7 @@ function price(id: keyof typeof PLANS) {
 function summary(id: keyof typeof PLANS) {
   const p = PLANS[id];
   const lines = [`${p.monthlyRuns.toLocaleString()} runs a month`];
-  lines.push(
-    p.monthlyCreditsUsd
-      ? `$${p.monthlyCreditsUsd} of model credits`
-      : "Pay for model usage as you go",
-  );
+  lines.push(`$${p.monthlyCreditsUsd} of model credits`);
   if (p.schedules) lines.push("Schedules, webhooks and MCP");
   if (p.team) lines.push("Team workspaces");
   return lines;

@@ -3,6 +3,8 @@ import { generateText } from "ai";
 import type { LanguageModel } from "ai";
 import { z } from "zod";
 import { fail, requireActor } from "@/lib/auth";
+import { assertWithinCredits } from "@/lib/runs/enqueue";
+import { meterModelCall } from "@/lib/metering";
 import { canEdit } from "@/lib/tenant";
 import { resolveProvider } from "@/lib/providers";
 import {
@@ -37,6 +39,7 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       );
     }
+    await assertWithinCredits(actor.org.id, actor.org.plan);
     const p = resolveProvider();
     const chatModel = "google/gemini-2.5-flash";
     const kind: SkillKindHint = parsed.data.kind ?? guessSkillKind(parsed.data.brief);
@@ -44,6 +47,10 @@ export async function POST(req: NextRequest) {
       model: p.gw.chat(chatModel) as LanguageModel,
       system: buildSkillSystemPrompt(kind),
       prompt: buildSkillUserPrompt(parsed.data.brief, { name: parsed.data.name }),
+    });
+    await meterModelCall(actor.org.id, "skill", chatModel, {
+      usage: result.usage,
+      providerMetadata: result.providerMetadata,
     });
     const markdown = extractSkillMarkdown(result.text ?? "");
     if (!markdown) {

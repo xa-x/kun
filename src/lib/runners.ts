@@ -89,7 +89,7 @@ export interface RunCtx {
   runId?: string;
 }
 
-function usageFromUnknown(raw: unknown, extra?: Partial<UsageInfo>): UsageInfo {
+export function usageFromUnknown(raw: unknown, extra?: Partial<UsageInfo>): UsageInfo {
   const found = { costUsd: undefined as number | undefined, tokensIn: undefined as number | undefined, tokensOut: undefined as number | undefined };
   const walk = (v: unknown, depth: number) => {
     if (depth > 6 || !v || typeof v !== "object") return;

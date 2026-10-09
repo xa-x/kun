@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { graphs, shares } from "@/db/schema";
 import { toPortable } from "@/lib/portable";
 import { newId } from "@/lib/ids";
-import { requireActor } from "@/lib/auth";
+import { fail, requireActor } from "@/lib/auth";
 import { canEdit } from "@/lib/tenant";
 import type { GraphDoc } from "@/lib/types";
 
@@ -39,7 +39,12 @@ export async function POST(
   if (!share || (share.permission !== "fork" && share.permission !== "edit")) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
-  const actor = await requireActor(req);
+  let actor;
+  try {
+    actor = await requireActor(req);
+  } catch (e) {
+    return fail(e);
+  }
   if (!canEdit(actor.membership.role)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

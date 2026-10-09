@@ -4,13 +4,15 @@ import { db } from "@/db";
 import { organizations } from "@/db/schema";
 import { fail, requireActor } from "@/lib/auth";
 import { canAdmin } from "@/lib/tenant";
+import { isPlatformAdmin } from "@/lib/admin";
 import { planOf, PLANS } from "@/lib/billing";
 
 export const runtime = "nodejs";
 
 /**
- * Dev-mode checkout: switches the org's plan instantly. When STRIPE_SECRET_KEY
- * is configured this will be replaced by a real Stripe Checkout session.
+ * Checkout without a payment provider: switches the org's plan instantly.
+ * That is only safe for the operator, so in production it is limited to
+ * platform admins (ADMIN_EMAILS) until real Stripe Checkout replaces it.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -26,6 +28,12 @@ export async function POST(req: NextRequest) {
     if (process.env.STRIPE_SECRET_KEY) {
       return NextResponse.json(
         { error: "Stripe checkout is not wired yet — remove STRIPE_SECRET_KEY to use instant switching." },
+        { status: 501 },
+      );
+    }
+    if (process.env.NODE_ENV === "production" && !isPlatformAdmin(actor.user.email)) {
+      return NextResponse.json(
+        { error: "Paid plans aren't open yet — we'll email you when they are." },
         { status: 501 },
       );
     }

@@ -64,7 +64,7 @@ export async function saveArtifact(
   }
   const ext = EXT[mime] ?? (kind === "image" ? "png" : kind === "audio" ? "mp3" : "mp4");
   const filename = mediaKey(orgId, `${id}.${ext}`);
-  await objectStore.put(filename, buf);
+  await objectStore.put(filename, buf, mime);
   await db.insert(artifacts).values({
     id,
     orgId,

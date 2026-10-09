@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, isNull, or } from "drizzle-orm";
+import { and, eq, isNull, ne, or } from "drizzle-orm";
 import { db } from "@/db";
 import {
   apiKeys,
@@ -13,7 +13,8 @@ import {
 } from "@/db/schema";
 import { hashToken } from "./crypto";
 import { newId } from "./ids";
-import { isPlatformAdmin } from "./admin";
+import { isInvited, isPlatformAdmin } from "./admin";
+import { SIGNUP_OPEN } from "./signup-mode";
 import { orgForUser, type TenantError } from "./tenant";
 import type { MembershipRow, OrgRow, UserRow } from "@/db/schema";
 import { createSupabaseServerClient, supabaseConfigured } from "./supabase";
@@ -26,7 +27,12 @@ export interface Actor {
   org: OrgRow;
   membership: MembershipRow;
   via: "session" | "api_key" | "local";
+  /** Set for API keys only — what the key is allowed to do. */
+  scopes?: string[];
 }
+
+export const KEY_SCOPES = ["read", "run", "write", "mcp"] as const;
+export type KeyScope = (typeof KEY_SCOPES)[number];
 
 interface AuthUser {
   id: string;
@@ -34,10 +40,16 @@ interface AuthUser {
   name?: string | null;
 }
 
-/** Idempotently mirror a Supabase Auth user into our `users` table. */
-async function ensureUserRow(u: AuthUser): Promise<UserRow> {
+const LEGACY_LOCAL_EMAIL = "local@kun.dev";
+
+/**
+ * Idempotently mirror a Supabase Auth user into our `users` table. Null when
+ * sign-up is closed and this is a new, uninvited account.
+ */
+async function ensureUserRow(u: AuthUser): Promise<UserRow | null> {
   const [existing] = await db.select().from(users).where(eq(users.id, u.id)).limit(1);
   if (existing) return existing;
+  if (!SIGNUP_OPEN && !isInvited(u.email)) return null;
   const email = (u.email ?? `${u.id}@supabase.local`).trim().toLowerCase();
   const [row] = await db
     .insert(users)
@@ -75,6 +87,8 @@ export async function backfillOrphanRows(orgId: string, ownerId: string) {
  * Give a freshly-signed-in user a workspace. If the SQLite migration carried
  * over the local-first bootstrap org (its only member is local@kun.dev),
  * the first real account claims it — workbooks, runs, and artifacts included.
+ * Once anyone else is a member it is taken, and later accounts get their own
+ * empty workspace.
  */
 async function ensureWorkspace(userId: string) {
   const existing = await orgForUser(userId);
@@ -85,9 +99,22 @@ async function ensureWorkspace(userId: string) {
     .from(memberships)
     .innerJoin(organizations, eq(memberships.orgId, organizations.id))
     .innerJoin(users, eq(memberships.userId, users.id))
-    .where(eq(users.email, "local@kun.dev"))
+    .where(eq(users.email, LEGACY_LOCAL_EMAIL))
     .limit(1);
-  if (legacy[0]) {
+  const claimedBy = legacy[0]
+    ? await db
+        .select({ id: memberships.id })
+        .from(memberships)
+        .innerJoin(users, eq(memberships.userId, users.id))
+        .where(
+          and(
+            eq(memberships.orgId, legacy[0].org.id),
+            ne(users.email, LEGACY_LOCAL_EMAIL),
+          ),
+        )
+        .limit(1)
+    : [];
+  if (legacy[0] && !claimedBy.length) {
     await db
       .insert(memberships)
       .values({ id: newId(), orgId: legacy[0].org.id, userId, role: "owner" })
@@ -114,6 +141,7 @@ async function ensureWorkspace(userId: string) {
 
 async function actorFromSupabaseSession(u: AuthUser): Promise<Actor | null> {
   const user = await ensureUserRow(u);
+  if (!user) return null;
   const ctx = await ensureWorkspace(user.id);
   return { user, org: ctx.org, membership: ctx.membership, via: "session" };
 }
@@ -141,7 +169,28 @@ async function actorFromApiKey(raw: string): Promise<Actor | null> {
     .update(apiKeys)
     .set({ lastUsedAt: new Date() })
     .where(eq(apiKeys.id, key.id));
-  return { user, org, membership, via: "api_key" };
+  const scopes = key.scopes.split(",").map((s) => s.trim()).filter(Boolean);
+  return { user, org, membership, via: "api_key", scopes };
+}
+
+/**
+ * What an API key must hold to make this request. `null` means the route is
+ * session-only: keys can't mint keys, change the plan or reach the admin API.
+ */
+function scopeFor(req: NextRequest): KeyScope | null {
+  const path = req.nextUrl.pathname;
+  if (path.startsWith("/api/mcp")) return "mcp";
+  if (req.method === "GET" || req.method === "HEAD") return "read";
+  if (
+    path.startsWith("/api/keys") ||
+    path.startsWith("/api/billing") ||
+    path.startsWith("/api/admin") ||
+    path.startsWith("/api/auth")
+  ) {
+    return null;
+  }
+  if (path === "/api/run" || path.startsWith("/api/runs")) return "run";
+  return "write";
 }
 
 export async function resolveActor(req?: NextRequest): Promise<Actor | null> {
@@ -168,6 +217,19 @@ export async function requireActor(req?: NextRequest): Promise<Actor> {
   const actor = await resolveActor(req);
   if (!actor) {
     throw Object.assign(new Error("Sign in required"), { status: 401 });
+  }
+  if (req && actor.via === "api_key") {
+    const need = scopeFor(req);
+    if (!need) {
+      throw Object.assign(new Error("This action needs a signed-in session, not an API key."), {
+        status: 403,
+      });
+    }
+    if (!actor.scopes?.includes(need)) {
+      throw Object.assign(new Error(`This API key is missing the "${need}" scope.`), {
+        status: 403,
+      });
+    }
   }
   return actor;
 }
@@ -218,7 +280,14 @@ export async function login(email: string, password: string) {
     email: data.user.email,
     name: (data.user.user_metadata as { name?: string } | null)?.name,
   });
-  return { actor: actor! };
+  if (!actor) {
+    await supabase.auth.signOut();
+    throw Object.assign(
+      new Error("This account hasn't been invited yet — sign-up is invite-only for now."),
+      { status: 403 },
+    );
+  }
+  return { actor };
 }
 
 export async function destroySession() {

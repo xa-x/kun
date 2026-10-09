@@ -13,8 +13,11 @@ watch results stream in live.
   through AI SDK model instances (`chat` / `imageModel` / `videoModel`),
   with `streamText` for live token streaming and
   `experimental_generateVideo` for async video jobs
-- **Drizzle ORM + better-sqlite3** — workbooks, run history, per-node usage
-- Media artifacts stored on disk under `.data/media`
+- **Supabase** — Auth for sign-in, Postgres (via Drizzle ORM) for workbooks,
+  run history and usage
+- **Cloudflare R2** — uploads and generated media, in a private bucket that
+  only the server reads (`.data/media` on disk when the R2 variables are
+  unset, for local development)
 
 ## Routes and layout
 
@@ -55,21 +58,44 @@ running, green for ok and red for error. Tokens live in `src/app/globals.css`.
 The node card is one presentational component (`components/node/NodeFrame`),
 shared by the canvas and the landing-page preview.
 
-## Providers (registry-based)
+## Providers
 
-Providers are resolved from a registry (`src/lib/providers.ts`). Each spec
-declares its capabilities (`chat` / `image` / `video`), and any
-OpenAI-compatible gateway can be added as a new spec entry:
+Every model call goes through OpenRouter with the server's
+`OPENROUTER_API_KEY` (`src/lib/providers.ts`). Users never bring their own
+key, so model usage is metered and capped per workspace (see below).
 
-| id           | capabilities       | config                        |
-| ------------ | ------------------ | ----------------------------- |
-| `openrouter` | chat, image, video | `OPENROUTER_API_KEY`          |
-| `pyok`       | chat, image        | `PYOK_BASE_URL` + `PYOK_API_KEY`|
+## Plans and usage
 
-Credentials: the client's Settings (⚙︎, stored in localStorage) ride with
-each run; server `.env` values are the fallback. Adding a provider = one
-entry in `PROVIDER_SPECS` — model dropdowns, `/api/models` listing, and the
-runners pick it up automatically.
+Plans are defined in one place, `src/lib/billing.ts`:
+
+| plan | runs / month | model credits / month | schedules, webhooks, MCP, versions | team |
+| ---- | ------------ | --------------------- | ---------------------------------- | ---- |
+| Free | 50           | $1                    | no                                 | no   |
+| Pro  | 2,000        | $15                   | yes                                | no   |
+| Team | 10,000       | $40                   | yes                                | yes  |
+
+- Both limits are hard caps, checked in `enqueueRun` before a run starts
+  (manual, API, MCP, schedule and webhook alike). The assistant and skill
+  generator are metered and gated by the credit cap too. The run that crosses the credit
+  line still finishes, so the cap can be overshot by one run.
+- Usage is the billed cost: provider cost, then the admin's per-model price
+  override and margin (`/admin`, `src/lib/model-policy.ts`). It is written to
+  `usage_ledger` in micro-dollars when a run finishes.
+- There is no payment provider yet. `POST /api/billing/checkout` switches the
+  plan instantly, which in production is limited to `ADMIN_EMAILS`.
+
+## Access
+
+- Sign-up is invite-only (`SIGNUP_OPEN` in `src/lib/signup-mode.ts`). While
+  it is closed, a new account only gets a workspace if its email is in
+  `ADMIN_EMAILS` or `INVITED_EMAILS` — the Supabase publishable key is public,
+  so creating an Auth user alone gets nobody in. Keep email confirmation on
+  in Supabase Auth so an address can't be claimed by someone else.
+- API keys (`kun_…`) carry scopes: `read` (GET), `run` (start/cancel runs),
+  `write` (edit workbooks, skills, uploads, assistant) and `mcp`. Keys can
+  never manage keys, billing or the admin API — those need a session.
+- Media is private to its workspace. Outside it, a file is readable only
+  while a workbook that shows it has an active share link.
 
 ## Run engine
 
@@ -125,9 +151,20 @@ Uploaded media is stripped; skills stay with the snapshot.
 
 ```bash
 npm install
-cp .env.local.example .env.local   # add OPENROUTER_API_KEY
 npm run dev                        # http://localhost:3000
 ```
+
+`.env` needs:
+
+| variable | what it is |
+| -------- | ---------- |
+| `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Supabase project (Auth) |
+| `DATABASE_URL` | Supabase Postgres connection string (Settings → Database) |
+| `OPENROUTER_API_KEY` | the platform's model key |
+| `ADMIN_EMAILS` | comma-separated platform admins (`/admin`, plan switching) |
+| `INVITED_EMAILS` | comma-separated emails allowed to join while sign-up is closed |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Cloudflare R2 API token (R2 → Manage API tokens, Object Read & Write on the bucket) |
+| `R2_BUCKET` | media bucket name; defaults to `kun-media` |
 
 Database schema lives in `src/db/schema.ts` (Supabase Postgres). Schema
 migrations are in `supabase/migrations/`; one-off data migration scripts in

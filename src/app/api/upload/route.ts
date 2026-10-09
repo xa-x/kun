@@ -4,9 +4,14 @@ import { saveArtifact } from "@/lib/artifacts";
 
 export const runtime = "nodejs";
 
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+
 export async function POST(req: NextRequest) {
   try {
     const actor = await requireActor(req);
+    if (Number(req.headers.get("content-length") ?? 0) > MAX_UPLOAD_BYTES) {
+      return NextResponse.json({ error: "File is larger than 50 MB." }, { status: 413 });
+    }
     const form = await req.formData();
     const file = form.get("file");
     if (!(file instanceof File)) {
@@ -19,6 +24,15 @@ export async function POST(req: NextRequest) {
         : file.name.endsWith(".mp4")
           ? "video/mp4"
           : "application/octet-stream");
+
+    // SVG (and anything else XML/HTML-based) can carry script, and media is
+    // served from the app's own origin.
+    if (/xml|html|svg/i.test(mime)) {
+      return NextResponse.json({ error: `unsupported type: ${mime}` }, { status: 415 });
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      return NextResponse.json({ error: "File is larger than 50 MB." }, { status: 413 });
+    }
 
     const kind = mime.startsWith("image/")
       ? "image"

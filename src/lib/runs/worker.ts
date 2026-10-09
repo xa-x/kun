@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { runs } from "@/db/schema";
+import { jobs, runs } from "@/db/schema";
 import { executeGraph } from "../engine";
 import { claimNextJob, finishJob } from "../jobs";
 import { tickSchedules } from "../cron";
@@ -50,11 +50,53 @@ async function processRunJob(runId: string, orgId: string) {
   }
 }
 
+/** A live worker beats every 2s; this long without one means it died. */
+const STALE_RUN_MS = 2 * 60_000;
+
+/**
+ * Fail runs whose worker stopped (deploy, crash) so they don't sit in
+ * "running" forever, and close out the jobs that were driving them.
+ */
+async function reapStaleRuns() {
+  const dead = await db
+    .update(runs)
+    .set({
+      status: "error",
+      error: "The server stopped while this run was in progress. Run it again.",
+      finishedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(runs.status, "running"),
+        lt(runs.heartbeatAt, new Date(Date.now() - STALE_RUN_MS)),
+      ),
+    )
+    .returning({ id: runs.id });
+  if (!dead.length) return;
+  await db
+    .update(jobs)
+    .set({ status: "error", lastError: "worker stopped", finishedAt: new Date() })
+    .where(
+      and(
+        eq(jobs.status, "running"),
+        inArray(
+          sql`${jobs.payload}->>'runId'`,
+          dead.map((r) => r.id),
+        ),
+      ),
+    );
+}
+
 export async function tickJobs() {
   try {
     await tickSchedules();
   } catch (e) {
     console.error("[jobs] schedule tick failed:", errorSummary(e));
+  }
+  try {
+    await reapStaleRuns();
+  } catch (e) {
+    console.error("[jobs] stale-run sweep failed:", errorSummary(e));
   }
   // This runs from a timer with nothing awaiting it, so anything that rejects
   // here (a dropped database connection, say) would surface as an unhandled

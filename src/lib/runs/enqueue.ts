@@ -32,6 +32,31 @@ export async function countMonthlyRuns(orgId: string) {
   return Number(rows[0]?.n ?? 0);
 }
 
+/** Billed model usage this month, in micro-dollars (the ledger's unit). */
+export async function monthlySpendMicroUsd(orgId: string) {
+  const since = new Date(monthStart());
+  const rows = await db
+    .select({ n: sql<number>`coalesce(sum(${usageLedger.amountUsd}), 0)` })
+    .from(usageLedger)
+    .where(and(eq(usageLedger.orgId, orgId), gte(usageLedger.createdAt, since)));
+  return Number(rows[0]?.n ?? 0);
+}
+
+/**
+ * Refuse work that spends the platform's model key once the org has used its
+ * monthly credits. Checked before a run starts, so the run that crosses the
+ * line still finishes — the cap can be overshot by one run.
+ */
+export async function assertWithinCredits(orgId: string, planId: string) {
+  const plan = planOf(planId);
+  const spent = await monthlySpendMicroUsd(orgId);
+  if (spent >= plan.monthlyCreditsUsd * 1e6) {
+    throw new PlanLimitError(
+      `This workspace used its $${plan.monthlyCreditsUsd} of model credits for the month.`,
+    );
+  }
+}
+
 export async function enqueueRun(input: EnqueueInput, planId: string) {
   const plan = planOf(planId);
   if (input.trigger === "schedule" && !plan.schedules) {
@@ -49,6 +74,7 @@ export async function enqueueRun(input: EnqueueInput, planId: string) {
       `This workspace reached its ${plan.monthlyRuns} monthly run limit.`,
     );
   }
+  await assertWithinCredits(input.orgId, planId);
 
   if (input.idempotencyKey) {
     const [hit] = await db
@@ -112,7 +138,9 @@ export async function enqueueRun(input: EnqueueInput, planId: string) {
 
 export async function recordUsage(opts: {
   orgId: string;
-  runId: string;
+  runId?: string;
+  /** What spent it: a workbook run, or a model call outside one. */
+  kind?: "run" | "assistant" | "skill";
   amountUsd: number;
   tokens: number;
   model?: string;
@@ -122,7 +150,7 @@ export async function recordUsage(opts: {
     id: newId(),
     orgId: opts.orgId,
     runId: opts.runId,
-    kind: "run",
+    kind: opts.kind ?? "run",
     amountUsd: opts.amountUsd,
     tokens: opts.tokens,
     model: opts.model,

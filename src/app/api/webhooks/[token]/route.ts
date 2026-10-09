@@ -9,15 +9,19 @@ import { ensureJobLoop } from "@/lib/runs/worker";
 
 export const runtime = "nodejs";
 
+function safeEqual(a: string, b: string) {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && timingSafeEqual(x, y);
+}
+
+/** Accepts an HMAC-SHA256 of the body, or the bare secret as a bearer token. */
 function validSig(secret: string, raw: string, header: string | null) {
   if (!header) return false;
   const expected = createHmac("sha256", secret).update(raw).digest("hex");
-  const given = header.replace(/^sha256=/, "");
-  try {
-    return timingSafeEqual(Buffer.from(expected), Buffer.from(given));
-  } catch {
-    return header === secret;
-  }
+  return (
+    safeEqual(expected, header.replace(/^sha256=/, "")) || safeEqual(secret, header)
+  );
 }
 
 export async function POST(
@@ -37,7 +41,7 @@ export async function POST(
   const raw = await req.text();
   const auth = req.headers.get("x-kun-signature") ?? req.headers.get("authorization");
   const bearer = auth?.startsWith("Bearer ") ? auth.slice(7) : auth;
-  if (!validSig(hook.secret, raw, bearer) && bearer !== hook.secret) {
+  if (!validSig(hook.secret, raw, bearer ?? null)) {
     return NextResponse.json({ error: "invalid signature" }, { status: 401 });
   }
   let body: Record<string, unknown> = {};

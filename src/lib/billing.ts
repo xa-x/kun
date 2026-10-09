@@ -6,6 +6,10 @@ export interface Plan {
   monthlyUsd: number;
   seatUsd?: number;
   monthlyRuns: number;
+  /**
+   * Model usage included each month, in USD. This is a hard cap: once the
+   * org's billed usage reaches it, new runs are refused until next month.
+   */
   monthlyCreditsUsd: number;
   schedules: boolean;
   webhooks: boolean;
@@ -20,7 +24,7 @@ export const PLANS: Record<PlanId, Plan> = {
     label: "Free",
     monthlyUsd: 0,
     monthlyRuns: 50,
-    monthlyCreditsUsd: 0,
+    monthlyCreditsUsd: 1,
     schedules: false,
     webhooks: false,
     mcp: false,
@@ -65,6 +69,7 @@ export function monthStart(now = Date.now()) {
 }
 
 export class PlanLimitError extends Error {
+  status = 402;
   constructor(message: string) {
     super(message);
     this.name = "PlanLimitError";

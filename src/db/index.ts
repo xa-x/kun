@@ -1,15 +1,6 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema";
-import path from "path";
-import fs from "fs";
-
-const DATA_DIR = path.join(process.cwd(), ".data");
-export const MEDIA_DIR = path.join(DATA_DIR, "media");
-
-if (!fs.existsSync(MEDIA_DIR)) {
-  fs.mkdirSync(MEDIA_DIR, { recursive: true });
-}
 
 const globalForDb = globalThis as unknown as { __kunPg?: postgres.Sql };
 
