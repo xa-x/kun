@@ -1,4 +1,4 @@
-import { pgTable, text, integer, bigint, boolean, timestamp, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, primaryKey, text, integer, bigint, boolean, timestamp, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 const now = sql`now()`;
@@ -29,6 +29,9 @@ export const organizations = pgTable("organizations", {
   /** Polar customer and subscription behind a paid plan (null when free or granted). */
   polarCustomerId: text("polar_customer_id"),
   polarSubscriptionId: text("polar_subscription_id"),
+  createdBy: text("created_by"),
+  /** Privacy and sharing switches; read through `workspaceSettings`. */
+  settings: jsonb("settings").notNull().default(sql`'{}'::jsonb`),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
 });
 
@@ -153,6 +156,9 @@ export const artifacts = pgTable(
     mimeType: text("mime_type").notNull(),
     bytes: integer("bytes").notNull(),
     filename: text("filename").notNull(),
+    /** upload | generated | stock */
+    source: text("source").notNull().default("generated"),
+    meta: jsonb("meta"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
   },
   (t) => [index("artifacts_run_idx").on(t.runId), index("artifacts_org_idx").on(t.orgId)],
@@ -299,6 +305,9 @@ export const templates = pgTable(
     tags: jsonb("tags").notNull().default(sql`'[]'::jsonb`),
     workbook: jsonb("workbook").notNull(),
     cloneCount: integer("clone_count").notNull().default(0),
+    coverId: text("cover_id"),
+    media: jsonb("media").notNull().default(sql`'[]'::jsonb`),
+    likeCount: integer("like_count").notNull().default(0),
     featured: boolean("featured").notNull().default(false),
     publishedBy: text("published_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
@@ -308,6 +317,92 @@ export const templates = pgTable(
     uniqueIndex("templates_slug_idx").on(t.slug),
     index("templates_featured_idx").on(t.featured, t.createdAt),
   ],
+);
+
+export const workspaceInvites = pgTable(
+  "workspace_invites",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    token: text("token").notNull(),
+    role: text("role").notNull().default("editor"),
+    email: text("email"),
+    createdBy: text("created_by").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
+  },
+  (t) => [
+    uniqueIndex("workspace_invites_token_idx").on(t.token),
+    index("workspace_invites_org_idx").on(t.orgId),
+  ],
+);
+
+/** What platform admins changed, and who did it. */
+export const adminAudit = pgTable(
+  "admin_audit",
+  {
+    id: text("id").primaryKey(),
+    actorEmail: text("actor_email").notNull(),
+    action: text("action").notNull(),
+    targetType: text("target_type").notNull(),
+    targetId: text("target_id").notNull(),
+    detail: jsonb("detail"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
+  },
+  (t) => [index("admin_audit_created_idx").on(t.createdAt)],
+);
+
+/** Runtime switches an operator can flip without a deploy (see lib/platform.ts). */
+export const platformSettings = pgTable("platform_settings", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(now),
+});
+
+/** Emails allowed to create an account while sign-up is closed. */
+export const platformInvites = pgTable("platform_invites", {
+  email: text("email").primaryKey(),
+  note: text("note"),
+  invitedBy: text("invited_by").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
+});
+
+export const templateLikes = pgTable(
+  "template_likes",
+  {
+    templateId: text("template_id").notNull(),
+    userId: text("user_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
+  },
+  (t) => [primaryKey({ columns: [t.templateId, t.userId] })],
+);
+
+export const communityEvents = pgTable(
+  "community_events",
+  {
+    id: text("id").primaryKey(),
+    kind: text("kind").notNull(), // published | remixed
+    templateId: text("template_id").notNull(),
+    userId: text("user_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
+  },
+  (t) => [index("community_events_created_idx").on(t.createdAt)],
+);
+
+/** Projects other people shared with me: a share link I opened while signed in. */
+export const savedShares = pgTable(
+  "saved_shares",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    graphId: text("graph_id").notNull(),
+    token: text("token").notNull(),
+    title: text("title").notNull().default("Untitled"),
+    ownerName: text("owner_name").notNull().default(""),
+    lastOpenedAt: timestamp("last_opened_at", { withTimezone: true }).notNull().default(now),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
+  },
+  (t) => [uniqueIndex("saved_shares_user_graph_idx").on(t.userId, t.graphId)],
 );
 
 export const usageLedger = pgTable(
@@ -355,6 +450,8 @@ export const modelPolicy = pgTable("model_policy", {
   pricePerUsd: integer("price_per_usd"),
   /** Markup percentage billed on top of the cost basis. */
   marginPct: integer("margin_pct").notNull().default(0),
+  /** Suggestion order set from the admin dashboard; lower first, null = not pinned. */
+  pinRank: integer("pin_rank"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(now),
 });
 
