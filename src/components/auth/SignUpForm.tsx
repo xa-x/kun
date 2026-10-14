@@ -8,11 +8,13 @@ import { readJson } from "@/lib/http";
 import { resetSessionInfo } from "@/lib/session-info";
 import { toast } from "@/components/Toast";
 import { APP_HOME, SIGN_IN } from "@/lib/routes";
-import { SIGNUP_OPEN } from "@/lib/signup-mode";
+import { useI18n } from "@/lib/i18n";
 import { AuthField } from "./AuthField";
 
-export function SignUpForm() {
+/** `closed`: sign-up is invite-only, so only invited emails get through. */
+export function SignUpForm({ closed = false }: { closed?: boolean }) {
   const router = useRouter();
+  const { t } = useI18n();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -35,58 +37,41 @@ export function SignUpForm() {
       }>(res);
       if (res.status === 202 && j.needsConfirmation) {
         toast(
-          j.message || "Check your email to confirm your account, then sign in.",
+          j.message || t("site.auth.signUp.confirm"),
           "info",
         );
         router.replace(SIGN_IN);
         return;
       }
-      if (!res.ok) throw new Error(j.error || "Sign up failed");
+      if (!res.ok) throw new Error(j.error || t("site.auth.signUp.failed"));
       resetSessionInfo();
       router.replace(APP_HOME);
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Sign up failed");
+      setError(e instanceof Error ? e.message : t("site.auth.signUp.failed"));
       setBusy(false);
     }
   };
 
-  if (!SIGNUP_OPEN) {
-    return (
-      <div>
-        <h1 className="text-[28px] font-semibold leading-tight tracking-tight text-ink">
-          Kun is invite-only
-        </h1>
-        <p className="mt-2 text-[14.5px] leading-relaxed text-muted">
-          We&apos;re still building, so accounts are created by invitation.
-        </p>
-        <div className="mt-8 flex gap-3.5 rounded-2xl border border-line bg-card/60 p-4">
+  return (
+    <div>
+      <h1 className="text-[28px] font-semibold leading-tight tracking-tight text-ink">
+        {t("site.auth.signUp.title")}
+      </h1>
+      <p className="mt-2 text-[14.5px] leading-relaxed text-muted">
+        {t("site.auth.signUp.body")}
+      </p>
+
+      {closed && (
+        <div className="mt-6 flex gap-3.5 rounded-2xl border border-line bg-card/60 p-4">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink/8 text-ink">
             <LockSimple size={16} weight="bold" aria-hidden />
           </span>
           <p className="text-[13.5px] leading-relaxed text-muted">
-            Ask whoever runs this instance for an invite. If you already have an
-            account, sign in to continue.
+            {t("site.auth.invite.title")}. {t("site.auth.invite.body")}
           </p>
         </div>
-        <Link
-          href={SIGN_IN}
-          className="kun-btn-primary mt-6 flex h-11 w-full items-center justify-center rounded-full text-[14px] font-medium"
-        >
-          Sign in
-        </Link>
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <h1 className="text-[28px] font-semibold leading-tight tracking-tight text-ink">
-        Create your account
-      </h1>
-      <p className="mt-2 text-[14.5px] leading-relaxed text-muted">
-        A private workspace for your pipelines. Drawing nodes is free.
-      </p>
+      )}
 
       <form
         className="mt-8 space-y-4"
@@ -96,7 +81,7 @@ export function SignUpForm() {
         }}
       >
         <AuthField
-          label="Name"
+          label={t("site.auth.name")}
           required
           autoComplete="name"
           autoFocus
@@ -104,7 +89,7 @@ export function SignUpForm() {
           onChange={(e) => setName(e.target.value)}
         />
         <AuthField
-          label="Email"
+          label={t("site.auth.email")}
           type="email"
           required
           autoComplete="email"
@@ -112,7 +97,7 @@ export function SignUpForm() {
           onChange={(e) => setEmail(e.target.value)}
         />
         <AuthField
-          label="Password"
+          label={t("site.auth.password")}
           type="password"
           required
           minLength={6}
@@ -120,7 +105,7 @@ export function SignUpForm() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
-        <p className="-mt-2 text-[12.5px] text-faint">At least 6 characters.</p>
+        <p className="-mt-2 text-[12.5px] text-faint">{t("site.auth.signUp.minLength")}</p>
 
         <p
           role="alert"
@@ -135,17 +120,17 @@ export function SignUpForm() {
           disabled={busy}
           className="kun-btn-primary flex h-11 w-full items-center justify-center rounded-full text-[14px] font-medium disabled:opacity-60"
         >
-          {busy ? "Creating…" : "Create account"}
+          {busy ? t("site.auth.signUp.busy") : t("site.auth.signUp.submit")}
         </button>
       </form>
 
       <p className="mt-6 text-center text-[13.5px] text-muted">
-        Already have an account?{" "}
+        {t("site.auth.signUp.have")}{" "}
         <Link
           href={SIGN_IN}
           className="font-medium text-ink underline-offset-4 hover:underline"
         >
-          Sign in
+          {t("site.auth.signUp.signIn")}
         </Link>
       </p>
     </div>

@@ -4,8 +4,12 @@ import { getActor } from "@/lib/guard";
 import { safeNext } from "@/lib/routes";
 import { supabaseConfigured } from "@/lib/supabase";
 import { SignInForm } from "@/components/auth/SignInForm";
+import { getT } from "@/lib/i18n/server";
 
-export const metadata: Metadata = { title: "Sign in" };
+export async function generateMetadata(): Promise<Metadata> {
+  const { t } = await getT();
+  return { title: t("site.meta.signIn") };
+}
 
 export default async function SignInPage({
   searchParams,

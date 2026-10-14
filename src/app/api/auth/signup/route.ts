@@ -1,18 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fail, signup } from "@/lib/auth";
-import { SIGNUP_OPEN } from "@/lib/signup-mode";
+import { canSignUp } from "@/lib/platform";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   try {
-    if (!SIGNUP_OPEN) {
+    const body = await req.json().catch(() => ({}));
+    if (!(await canSignUp(String(body.email ?? "")))) {
       return NextResponse.json(
-        { error: "Sign-up is invite-only while we're in development." },
+        { error: "Sign-up is invite-only right now. Use the email address you were invited with." },
         { status: 403 },
       );
     }
-    const body = await req.json().catch(() => ({}));
     const { needsConfirmation } = await signup(
       String(body.email ?? ""),
       String(body.password ?? ""),

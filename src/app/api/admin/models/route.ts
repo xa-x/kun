@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fail, requireActor } from "@/lib/auth";
+import { audit } from "@/lib/admin-api";
 import { isPlatformAdmin } from "@/lib/admin";
 import {
   policyMap,
@@ -50,8 +51,12 @@ export async function PUT(req: NextRequest) {
       patch.pricePerUsd = body.pricePerUsd;
     if (typeof body.marginPct === "number" && body.marginPct >= 0 && body.marginPct <= 1000)
       patch.marginPct = Math.round(body.marginPct);
+    if (body.pinRank === null) patch.pinRank = null;
+    else if (Number.isInteger(body.pinRank) && body.pinRank >= 0 && body.pinRank <= 999)
+      patch.pinRank = body.pinRank;
     await setModelPolicy(patch);
     invalidatePolicyCache();
+    await audit(actor, "model.policy", { type: "model", id: model }, { ...patch });
     const map = await policyMap();
     return NextResponse.json({ policy: map.get(model) ?? null });
   } catch (e) {

@@ -7,7 +7,7 @@ import { Warning } from "@phosphor-icons/react";
 import { readJson } from "@/lib/http";
 import { resetSessionInfo } from "@/lib/session-info";
 import { SIGN_UP } from "@/lib/routes";
-import { SIGNUP_OPEN } from "@/lib/signup-mode";
+import { useI18n } from "@/lib/i18n";
 import { AuthField } from "./AuthField";
 
 export function SignInForm({
@@ -19,6 +19,7 @@ export function SignInForm({
   configured: boolean;
 }) {
   const router = useRouter();
+  const { t } = useI18n();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -34,12 +35,12 @@ export function SignInForm({
         body: JSON.stringify({ email, password }),
       });
       const j = await readJson<{ error?: string }>(res);
-      if (!res.ok) throw new Error(j.error || "Sign in failed");
+      if (!res.ok) throw new Error(j.error || t("site.auth.signIn.failed"));
       resetSessionInfo();
       router.replace(next);
       router.refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Sign in failed");
+      setError(e instanceof Error ? e.message : t("site.auth.signIn.failed"));
       setBusy(false);
     }
   };
@@ -47,10 +48,10 @@ export function SignInForm({
   return (
     <div>
       <h1 className="text-[28px] font-semibold leading-tight tracking-tight text-ink">
-        Welcome back
+        {t("site.auth.signIn.title")}
       </h1>
       <p className="mt-2 text-[14.5px] leading-relaxed text-muted">
-        Sign in to pick up your workbooks where you left them.
+        {t("site.auth.signIn.body")}
       </p>
 
       {!configured && process.env.NODE_ENV !== "production" && (
@@ -60,13 +61,19 @@ export function SignInForm({
         >
           <Warning size={18} weight="bold" className="mt-px shrink-0 text-warn" aria-hidden />
           <p>
-            Auth isn&apos;t configured for this server. Set{" "}
-            <code className="font-mono text-[12px]">NEXT_PUBLIC_SUPABASE_URL</code>{" "}
-            and{" "}
-            <code className="font-mono text-[12px]">
+            {t("site.auth.signIn.notConfigured.before")}{" "}
+            <code dir="ltr" className="font-mono text-[12px]">
+              NEXT_PUBLIC_SUPABASE_URL
+            </code>{" "}
+            {t("site.auth.signIn.notConfigured.and")}{" "}
+            <code dir="ltr" className="font-mono text-[12px]">
               NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
             </code>{" "}
-            in <code className="font-mono text-[12px]">.env.local</code>.
+            {t("site.auth.signIn.notConfigured.in")}{" "}
+            <code dir="ltr" className="font-mono text-[12px]">
+              .env.local
+            </code>
+            .
           </p>
         </div>
       )}
@@ -79,7 +86,7 @@ export function SignInForm({
         }}
       >
         <AuthField
-          label="Email"
+          label={t("site.auth.email")}
           type="email"
           required
           autoComplete="email"
@@ -88,7 +95,7 @@ export function SignInForm({
           onChange={(e) => setEmail(e.target.value)}
         />
         <AuthField
-          label="Password"
+          label={t("site.auth.password")}
           type="password"
           required
           autoComplete="current-password"
@@ -109,24 +116,15 @@ export function SignInForm({
           disabled={busy}
           className="kun-btn-primary flex h-11 w-full items-center justify-center rounded-full text-[14px] font-medium disabled:opacity-60"
         >
-          {busy ? "Signing in…" : "Sign in"}
+          {busy ? t("site.auth.signIn.busy") : t("site.auth.signIn.submit")}
         </button>
       </form>
 
       <p className="mt-6 text-center text-[13.5px] text-muted">
-        {SIGNUP_OPEN ? (
-          <>
-            New to Kun?{" "}
-            <Link
-              href={SIGN_UP}
-              className="font-medium text-ink underline-offset-4 hover:underline"
-            >
-              Create an account
-            </Link>
-          </>
-        ) : (
-          "New accounts are invite-only while we build."
-        )}
+        {t("site.auth.signIn.newHere")}{" "}
+        <Link href={SIGN_UP} className="font-medium text-ink underline-offset-4 hover:underline">
+          {t("site.auth.signIn.create")}
+        </Link>
       </p>
     </div>
   );
