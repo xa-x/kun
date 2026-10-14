@@ -53,8 +53,14 @@ describe("billableCostUsd", () => {
     expect(await billableCostUsd("a/both", 0.9)).toBeCloseTo(0.15);
   });
 
-  it("returns undefined cost untouched", async () => {
+  it("returns undefined cost untouched when no price is configured", async () => {
     expect(await billableCostUsd("a/marked", undefined)).toBeUndefined();
+    expect(await billableCostUsd("unknown/x", undefined)).toBeUndefined();
+  });
+
+  it("uses the configured price when the provider reports no cost", async () => {
+    expect(await billableCostUsd("a/priced", undefined)).toBe(0.05);
+    expect(await billableCostUsd("a/both", undefined)).toBeCloseTo(0.15);
   });
 });
 

@@ -142,3 +142,15 @@ export function requireDuration(raw?: number | string): number | undefined {
   if (!parsed) throw new Error(`Invalid duration "${raw}". Use seconds, e.g. 5.`);
   return parsed;
 }
+
+/**
+ * A width / height number from "16:9", "1024x1024" or "1920×1080", for sizing
+ * a preview before the media exists. Undefined for anything else.
+ */
+export function aspectNumber(raw?: string): number | undefined {
+  const m = raw?.trim().match(/^(\d+(?:\.\d+)?)\s*[:x×]\s*(\d+(?:\.\d+)?)$/i);
+  if (!m) return;
+  const w = Number(m[1]);
+  const h = Number(m[2]);
+  return w > 0 && h > 0 ? w / h : undefined;
+}

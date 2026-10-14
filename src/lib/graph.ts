@@ -62,6 +62,37 @@ function portsFor(kind: string, handle: string | null | undefined, dir: "in" | "
   return named ? [named] : all;
 }
 
+/** Fields that only describe the moment, never saved with a project. */
+const TRANSIENT_DATA = ["streamingText", "runStartedAt", "selected"] as const;
+
+/**
+ * A node's data as it is saved. Everything stays except what only matters
+ * while the page is open. (This used to be a hand-kept list of fields, which
+ * silently dropped any field added later: group membership, the File node's
+ * media type, frozen and pinned.)
+ */
+export function persistableData(data: NodeData): NodeData {
+  const out = { ...data } as Record<string, unknown>;
+  for (const k of TRANSIENT_DATA) delete out[k];
+  return out as NodeData;
+}
+
+/**
+ * A node saved mid-run still says queued or running when the project is opened
+ * later. With no run in flight that is stale: show what it holds, or nothing.
+ */
+export function settleStatus(data: NodeData): NodeData {
+  if (data.runStatus !== "queued" && data.runStatus !== "running") return data;
+  const { runStatus: _s, runStartedAt: _t, ...rest } = data;
+  void _s;
+  void _t;
+  return (data.outputs?.length ? { ...rest, runStatus: "done" } : rest) as NodeData;
+}
+
+/** Does the graph still hold a retired Output node? (Old saved projects do.) */
+export const hasOutputNode = (nodes: { data: { kind: string } }[]) =>
+  nodes.some((n) => n.data.kind.startsWith("out."));
+
 /**
  * Generative nodes whose result nothing can consume. Only output nodes render
  * results, so an AI node is inert unless it feeds an output node — directly,

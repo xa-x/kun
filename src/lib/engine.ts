@@ -1,8 +1,10 @@
 import { eq } from "drizzle-orm";
 import type { GraphDoc, NodeOutput, RunEvent, UsageInfo } from "./types";
 import { runNode, providerFor, modelFor, asError } from "./runners";
+import { transientMessage } from "./provider-errors";
+import { isRunnableKind } from "./nodes";
 import { nodeDef } from "./nodes";
-import { inertNodeIds, freshSourceIds } from "./graph";
+import { freshSourceIds, hasOutputNode, inertNodeIds } from "./graph";
 import { db } from "@/db";
 import { runs, runNodes } from "@/db/schema";
 import { newId } from "./ids";
@@ -33,13 +35,17 @@ export async function* executeGraph(
     runId?: string;
     only?: string;
     from?: string;
+    /** Run exactly these nodes (a group), reading everything else from `cached`. */
+    nodes?: string[];
     cached?: Record<string, NodeOutput[]>;
     signal?: AbortSignal;
   } = {},
 ): AsyncGenerator<RunEvent> {
   const runId = opts.runId ?? newId();
   const orgId = opts.orgId ?? "";
-  const nodes = new Map(graph.nodes.map((n) => [n.id, n]));
+  // Comments and groups annotate the canvas; they never run.
+  const runnable = graph.nodes.filter((n) => isRunnableKind(n.data.kind));
+  const nodes = new Map(runnable.map((n) => [n.id, n]));
   const edges = graph.edges.filter(
     (e) => nodes.has(e.source) && nodes.has(e.target),
   );
@@ -47,12 +53,18 @@ export async function* executeGraph(
   const outputs = new Map<string, NodeOutput[]>(
     Object.entries(opts.cached ?? {}),
   );
+  // A frozen node serves the result saved with the graph, so schedules and API
+  // runs (which send no cached results) still have something to read from it.
+  for (const n of runnable) {
+    const saved = n.data.outputs as NodeOutput[] | undefined;
+    if (n.data.frozen && saved?.length && !outputs.has(n.id)) outputs.set(n.id, saved);
+  }
 
   // adjacency
   const inDeg = new Map<string, number>();
   const incoming = new Map<string, string[]>();
   const outgoing = new Map<string, string[]>();
-  for (const n of graph.nodes) {
+  for (const n of runnable) {
     inDeg.set(n.id, 0);
     incoming.set(n.id, []);
     outgoing.set(n.id, []);
@@ -94,8 +106,15 @@ export async function* executeGraph(
       const port =
         srcNode &&
         nodeDef(srcNode.data.kind)?.outputs.find((p) => p.id === e.sourceHandle);
-      if (port && port.type !== "json")
+      if (port && port.type !== "json" && port.type !== "any")
         outs = outs.filter((o) => o.type === port.type);
+      // A typed input only takes its own kind, so an "any" source (Output,
+      // File) can feed it without handing over results it cannot read.
+      const sink = nodeDef(nodes.get(nodeId)?.data.kind ?? "")?.inputs.find(
+        (p) => p.id === key,
+      );
+      if (sink && sink.type !== "json" && sink.type !== "any")
+        outs = outs.filter((o) => o.type === sink.type);
       (inputs[key] ??= []).push(...outs);
     }
     return inputs;
@@ -126,8 +145,8 @@ export async function* executeGraph(
           orgId,
           graphId: opts.graphId,
           status,
-          trigger: opts.only || opts.from ? "node" : "manual",
-          only: opts.only ?? opts.from ?? null,
+          trigger: opts.only || opts.from || opts.nodes?.length ? "node" : "manual",
+          only: opts.only ?? opts.from ?? (opts.nodes?.length ? "group" : null),
           totalCostUsd: Math.round(totals.costUsd * 1e6),
           totalTokens: totals.tokens,
           durationMs: Date.now() - runStarted,
@@ -236,20 +255,29 @@ export async function* executeGraph(
 
     const scope = opts.only
       ? new Set([opts.only])
-      : opts.from && nodes.has(opts.from)
-        ? new Set(downstreamIds(opts.from, edges))
-        : null;
+      : opts.nodes?.length
+        ? new Set(opts.nodes.filter((id) => nodes.has(id)))
+        : opts.from && nodes.has(opts.from)
+          ? new Set(downstreamIds(opts.from, edges))
+          : null;
 
     // A from/only run must not read a Text/Instruction/Upload node through a
     // missing or stale cached output — those nodes are free, so run them
     // fresh alongside the requested scope.
     if (scope)
-      for (const id of freshSourceIds(graph.nodes, edges, scope)) scope.add(id);
+      for (const id of freshSourceIds(runnable, edges, scope)) scope.add(id);
 
-    // Never spend a generation on a node nobody reads from. Running a single
-    // node is explicit intent, so that node is always allowed.
-    const inert = opts.only ? new Set<string>() : inertNodeIds(graph.nodes, edges);
+    // Every node shows its own result, so a full run runs them all. Graphs
+    // saved with an Output node keep their old rule: never spend a generation
+    // on a node that does not lead into one. Running a single node is explicit
+    // intent, so that node is always allowed.
+    const inert =
+      opts.only || !hasOutputNode(runnable)
+        ? new Set<string>()
+        : inertNodeIds(runnable, edges);
     if (opts.from) inert.delete(opts.from);
+    // Running a group is explicit intent for everything inside it.
+    if (opts.nodes && scope) for (const id of scope) inert.delete(id);
 
     if (scope) {
       for (const id of scope) inDeg.set(id, 0);
@@ -276,7 +304,7 @@ export async function* executeGraph(
       for (const id of scope)
         if ((inDeg.get(id) ?? 0) === 0) pending.push(id);
     } else {
-      for (const n of graph.nodes)
+      for (const n of runnable)
         if ((inDeg.get(n.id) ?? 0) === 0) pending.push(n.id);
     }
 
@@ -306,7 +334,10 @@ export async function* executeGraph(
         });
         await persistNode(nodeId, "done", result, undefined, started, node.data);
       } catch (err) {
-        const msg = asError(err).message;
+        const friendly = transientMessage(err);
+        // The raw provider error stays in the server log; the user gets the friendly line.
+        if (friendly) console.error(`[engine] node ${nodeId} hit a transient provider error:`, err);
+        const msg = friendly ?? asError(err).message;
         failed.add(nodeId);
         state.failedAny = true;
         emit({ type: "node", nodeId, status: "error", error: msg, ts: Date.now() });
@@ -327,6 +358,17 @@ export async function* executeGraph(
         const id = pending.shift()!;
         if (settled.has(id)) continue;
         const up = incoming.get(id) ?? [];
+        const target = nodes.get(id);
+        // A frozen node keeps its last result and is not run again; what
+        // follows it reads that result and runs as normal. Asking for it by
+        // itself (Run on the node) still runs it.
+        if (target?.data.frozen && opts.only !== id) {
+          // No event and no record: as far as the canvas is concerned nothing
+          // happened to it, and its card keeps showing its result.
+          settled.add(id);
+          release(id);
+          continue;
+        }
         const reason = inert.has(id)
           ? "skipped: nothing is connected to this node's output"
           : // a broken upstream only skips in full-run mode

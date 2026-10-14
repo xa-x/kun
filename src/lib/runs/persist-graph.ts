@@ -4,7 +4,7 @@ import { graphs } from "@/db/schema";
 import { mergeNodeRuntime } from "../graph";
 import type { GraphDoc, NodeOutput, RunStatus, UsageInfo } from "../types";
 
-/** Write a node's run result into the saved workbook so closing the browser doesn't drop it. */
+/** Write a node's run result into the saved project so closing the browser doesn't drop it. */
 export async function writeNodeOutputToGraph(
   graphId: string,
   nodeId: string,

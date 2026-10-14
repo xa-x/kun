@@ -4,19 +4,21 @@ import { db } from "@/db";
 import { graphs, runs, schedules } from "@/db/schema";
 import { fail, requireActor } from "@/lib/auth";
 import { canEdit } from "@/lib/tenant";
+import { assertCanCreateProject } from "@/lib/limits";
 import { newId } from "@/lib/ids";
 import { snapshotWorkbook } from "@/lib/versions";
 import { toPortable } from "@/lib/portable";
 import { mergeGraphRuntime } from "@/lib/graph";
 import { ensureJobLoop } from "@/lib/runs/worker";
 import type { GraphDoc } from "@/lib/types";
+import { publishDoc } from "@/lib/publish";
 
 export const runtime = "nodejs";
 
 const ACCEPTED_KEYS = ["title", "graph"] as const;
 
 type GraphDocLite = {
-  nodes?: { data?: { kind?: string } }[];
+  nodes?: { data?: { kind?: string; outputs?: { type: string; artifactId?: string }[] } }[];
   edges?: unknown[];
 };
 
@@ -31,7 +33,16 @@ function summarize(graph: unknown) {
         .filter((k): k is string => typeof k === "string" && !!k),
     ),
   ];
-  return { nodeCount: nodes.length, edgeCount: edges.length, kinds };
+  // The first picture the project made, so its card shows real work.
+  let coverId: string | null = null;
+  for (const n of nodes) {
+    const hit = n?.data?.outputs?.find((o) => o.type === "image" && o.artifactId);
+    if (hit?.artifactId) {
+      coverId = hit.artifactId;
+      break;
+    }
+  }
+  return { nodeCount: nodes.length, edgeCount: edges.length, kinds, coverId };
 }
 
 export async function GET(req: NextRequest) {
@@ -100,6 +111,7 @@ export async function POST(req: NextRequest) {
     if (!canEdit(actor.membership.role)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+    await assertCanCreateProject(actor.org.id, actor.org.plan);
     const body = await req.json().catch(() => ({}));
     const id = newId();
     const [row] = await db
@@ -143,7 +155,7 @@ export async function PATCH(req: NextRequest) {
     if (body.graph) {
       patch.graph = mergeGraphRuntime(body.graph as GraphDoc, cur.graph as GraphDoc);
     }
-    if (body.publish) patch.publishedGraph = body.graph ?? cur.graph;
+    if (body.publish) patch.publishedGraph = publishDoc((body.graph ?? cur.graph) as GraphDoc);
     const [row] = await db
       .update(graphs)
       .set(patch as never)

@@ -3,6 +3,7 @@
 import { CaretDown, Sparkle } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { readJson } from "@/lib/http";
+import { useI18n } from "@/lib/i18n";
 import { parseSkillMd } from "@/lib/skills/format";
 import { toast } from "./Toast";
 
@@ -22,10 +23,10 @@ export interface SkillChoice {
   name?: string;
 }
 
-function sourceLabel(source?: string) {
-  if (source === "builtin") return "Bundled";
-  if (source === "registry") return "Installed";
-  if (source === "local") return "Yours";
+function sourceLabel(t: (k: "editor.skill.bundled" | "editor.skill.installed" | "editor.skill.yours") => string, source?: string) {
+  if (source === "builtin") return t("editor.skill.bundled");
+  if (source === "registry") return t("editor.skill.installed");
+  if (source === "local") return t("editor.skill.yours");
   return "skills.sh";
 }
 
@@ -56,6 +57,7 @@ export function SkillPicker({
   /** Prefill "New skill" from the current node text. */
   draft?: { displayName?: string; body?: string };
 }) {
+  const { t, tn } = useI18n();
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Mode>("list");
   const [q, setQ] = useState("");
@@ -176,7 +178,7 @@ export function SkillPicker({
 
   const installRemote = async (s: SkillChoice) => {
     if (s.resolvable === false) {
-      toast("That skill isn’t hosted on GitHub, so it can’t be installed.", "error");
+      toast(t("editor.skill.notGithub"), "error");
       return;
     }
     try {
@@ -191,22 +193,22 @@ export function SkillPicker({
         }),
       });
       const j = await readJson<{ skill?: SkillChoice; error?: string }>(res);
-      if (!res.ok || !j.skill) throw new Error(j.error || "Install failed");
+      if (!res.ok || !j.skill) throw new Error(j.error || t("editor.skill.installFailed"));
       mergeInstalled([j.skill]);
       onPick(j.skill);
       setOpen(false);
       setMode("list");
       setQ("");
-      toast(`Installed ${j.skill.displayName}.`, "ok");
+      toast(t("editor.skill.installedToast", { name: j.skill.displayName }), "ok");
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Install failed", "error");
+      toast(e instanceof Error ? e.message : t("editor.skill.installFailed"), "error");
     }
   };
 
   const draftWithAI = async () => {
     if (drafting) return;
     if (brief.trim().length < 3) {
-      toast("Describe what the skill should do first.", "error");
+      toast(t("editor.skill.describeFirst"), "error");
       return;
     }
     setDrafting(true);
@@ -220,14 +222,14 @@ export function SkillPicker({
         }),
       });
       const j = await readJson<{ markdown?: string; error?: string }>(res);
-      if (!res.ok || !j.markdown) throw new Error(j.error || "Draft failed");
+      if (!res.ok || !j.markdown) throw new Error(j.error || t("editor.skill.draftFailed"));
       const parsed = parseSkillMd(j.markdown);
       setName(parsed.displayName || parsed.name || name);
       setDescription(parsed.description || description);
       setBody(parsed.body || parsed.description || "");
-      toast("Draft ready — review, tweak, then save.", "ok");
+      toast(t("editor.skill.draftReady"), "ok");
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Draft failed", "error");
+      toast(e instanceof Error ? e.message : t("editor.skill.draftFailed"), "error");
     } finally {
       setDrafting(false);
     }
@@ -249,20 +251,20 @@ export function SkillPicker({
         error?: string;
       }>(res);
       if (!res.ok || !j.skills?.length) {
-        throw new Error(j.error || "Pull failed");
+        throw new Error(j.error || t("editor.skill.pullFailed"));
       }
       mergeInstalled(j.skills);
       if (j.skills.length === 1) {
         onPick(j.skill ?? j.skills[0]);
         setOpen(false);
         setMode("list");
-        toast(`Installed ${j.skills[0].displayName}.`, "ok");
+        toast(t("editor.skill.installedToast", { name: j.skills[0].displayName }), "ok");
       } else {
         setMode("list");
-        toast(`Pulled ${j.skills.length} skills from that repo.`, "ok");
+        toast(tn("editor.skill.pulled", j.skills.length), "ok");
       }
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Pull failed", "error");
+      toast(e instanceof Error ? e.message : t("editor.skill.pullFailed"), "error");
     } finally {
       setPulling(false);
     }
@@ -283,14 +285,14 @@ export function SkillPicker({
       });
       const j = await readJson<{ skills?: SkillChoice[]; error?: string }>(res);
       if (!res.ok || !j.skills?.length) {
-        throw new Error(j.error || "Nothing imported — is that a SKILL.md or a skills bundle?");
+        throw new Error(j.error || t("editor.skill.nothingImported"));
       }
       mergeInstalled(j.skills);
       setOpen(false);
       setMode("list");
-      toast(`Imported ${j.skills.length} skill${j.skills.length === 1 ? "" : "s"}.`, "ok");
+      toast(tn("editor.skill.imported", j.skills.length), "ok");
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Import failed", "error");
+      toast(e instanceof Error ? e.message : t("editor.skill.importFailed"), "error");
     } finally {
       setImportingFile(false);
     }
@@ -299,27 +301,27 @@ export function SkillPicker({
   const downloadSkill = async (s: SkillChoice) => {
     try {
       const res = await fetch(`/api/skills/export?id=${encodeURIComponent(s.id)}`);
-      if (!res.ok) throw new Error("Export failed");
+      if (!res.ok) throw new Error(t("editor.skill.exportFailed"));
       saveBlob(`${s.slug}-SKILL.md`, await res.blob());
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Export failed", "error");
+      toast(e instanceof Error ? e.message : t("editor.skill.exportFailed"), "error");
     }
   };
 
   const exportLibrary = async () => {
     try {
       const res = await fetch("/api/skills/export");
-      if (!res.ok) throw new Error("Export failed");
+      if (!res.ok) throw new Error(t("editor.skill.exportFailed"));
       saveBlob("kun-skills.json", await res.blob());
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Export failed", "error");
+      toast(e instanceof Error ? e.message : t("editor.skill.exportFailed"), "error");
     }
   };
 
   const saveLocal = async () => {
     if (saving) return;
     if (!body.trim() && !name.trim()) {
-      toast("Give the skill a name or some instructions.", "error");
+      toast(t("editor.skill.needNameOrBody"), "error");
       return;
     }
     setSaving(true);
@@ -335,39 +337,39 @@ export function SkillPicker({
         }),
       });
       const j = await readJson<{ skill?: SkillChoice; error?: string }>(res);
-      if (!res.ok || !j.skill) throw new Error(j.error || "Save failed");
+      if (!res.ok || !j.skill) throw new Error(j.error || t("editor.skill.saveFailed"));
       mergeInstalled([j.skill]);
       onPick(j.skill);
       setMode("list");
       setOpen(false);
       setQ("");
-      toast(`Saved “${j.skill.displayName}”. Pick it on any node.`, "ok");
+      toast(t("editor.skill.savedToast", { name: j.skill.displayName }), "ok");
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Save failed", "error");
+      toast(e instanceof Error ? e.message : t("editor.skill.saveFailed"), "error");
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div ref={box} className="relative">
+    <div ref={box} className={compact ? "relative max-w-full" : "relative"}>
       <button
         type="button"
         aria-expanded={open}
         aria-haspopup="listbox"
         onClick={() => setOpen((v) => !v)}
-        className={`nodrag kun-chip-select flex w-full items-center justify-between gap-2 bg-none pr-2.5 text-left ${
-          selected ? "!text-ink" : ""
-        }`}
+        className={`nodrag kun-chip-select flex items-center justify-between gap-2 bg-none pe-2.5 text-start ${
+          compact ? "w-auto" : "w-full"
+        } ${selected ? "!text-ink" : ""}`}
       >
         <span className="flex min-w-0 items-center gap-1.5">
           <Sparkle size={11} weight={selected ? "fill" : "bold"} aria-hidden />
-          <span className="truncate">
+          <span dir="auto" className="truncate">
             {selected
               ? selected.displayName
               : compact
-                ? "No skill"
-                : "Pick a skill…"}
+                ? t("editor.skill.noSkill")
+                : t("editor.skill.pick")}
           </span>
         </span>
         <CaretDown size={10} weight="bold" aria-hidden />
@@ -375,24 +377,25 @@ export function SkillPicker({
       {selected && (
         <button
           type="button"
-          aria-label="Clear selected skill"
+          aria-label={t("editor.skill.clear")}
           onClick={() => onPick(null)}
-          className="nodrag absolute right-7 top-1/2 z-10 -translate-y-1/2 rounded-full px-1.5 text-[12px] leading-none text-faint transition-colors hover:bg-ink/10 hover:text-ink"
+          className="nodrag absolute end-7 top-1/2 z-10 -translate-y-1/2 rounded-full px-1.5 text-[12px] leading-none text-faint transition-colors hover:bg-ink/10 hover:text-ink"
         >
           ×
         </button>
       )}
       {open && mode === "create" && (
-        <div className="kun-pop nodrag nowheel absolute left-0 right-0 z-40 mt-1 rounded-lg border border-line2 bg-card p-2 shadow-xl">
+        <div className="kun-pop nodrag nowheel absolute start-0 w-64 max-w-[calc(100vw-2rem)] z-40 mt-1 rounded-lg border border-line2 bg-card p-2 shadow-xl">
           <p className="mb-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-faint">
-            New skill
+            {t("editor.skill.newSkill")}
           </p>
           <textarea
             value={brief}
             onChange={(e) => setBrief(e.target.value)}
             rows={2}
-            aria-label="What the skill should do"
-            placeholder="Describe what the skill should do — the AI drafts it…"
+            aria-label={t("editor.skill.briefLabel")}
+            dir="auto"
+            placeholder={t("editor.skill.briefPlaceholder")}
             className="nowheel mb-1 w-full resize-y rounded-md border border-line bg-sunken px-2 py-1 text-[11px] leading-relaxed text-ink outline-none placeholder:text-faint"
           />
           <div className="mb-2 flex items-center justify-between gap-1.5">
@@ -402,34 +405,37 @@ export function SkillPicker({
               disabled={drafting}
               className="rounded-md bg-accent px-2 py-1 text-[10px] font-medium text-canvas disabled:opacity-50"
             >
-              {drafting ? "Drafting…" : "✦ Draft with AI"}
+              {drafting ? t("editor.skill.drafting") : t("editor.skill.draftWithAi")}
             </button>
             <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-faint">
-              or write it by hand
+              {t("editor.skill.orByHand")}
             </span>
           </div>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
             autoComplete="off"
-            aria-label="Skill name"
-            placeholder="Name — e.g. cinematic product…"
+            aria-label={t("editor.skill.nameLabel")}
+            dir="auto"
+            placeholder={t("editor.skill.namePlaceholder")}
             className="mb-1 w-full rounded-md border border-line bg-sunken px-2 py-1 text-[11px] text-ink outline-none placeholder:text-faint"
           />
           <input
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             autoComplete="off"
-            aria-label="Skill description"
-            placeholder="When to use this skill…"
+            aria-label={t("editor.skill.descriptionLabel")}
+            dir="auto"
+            placeholder={t("editor.skill.descriptionPlaceholder")}
             className="mb-1 w-full rounded-md border border-line bg-sunken px-2 py-1 text-[11px] text-ink outline-none placeholder:text-faint"
           />
           <textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}
             rows={5}
-            aria-label="Skill instructions"
-            placeholder="Instructions the model should follow…"
+            aria-label={t("editor.skill.instructionsLabel")}
+            dir="auto"
+            placeholder={t("editor.skill.instructionsPlaceholder")}
             className="nowheel mb-2 w-full resize-y rounded-md border border-line bg-sunken px-2 py-1 text-[11px] leading-relaxed text-ink outline-none placeholder:text-faint"
           />
           <div className="flex justify-end gap-1.5">
@@ -438,7 +444,7 @@ export function SkillPicker({
               onClick={() => setMode("list")}
               className="rounded px-2 py-1 text-[10px] text-faint hover:text-ink"
             >
-              Back
+              {t("common.back")}
             </button>
             <button
               type="button"
@@ -446,15 +452,15 @@ export function SkillPicker({
               disabled={saving}
               className="rounded-md bg-accent px-2 py-1 text-[10px] font-medium text-canvas disabled:opacity-50"
             >
-              {saving ? "Saving…" : "Save to library"}
+              {saving ? t("common.saving") : t("editor.skill.saveToLibrary")}
             </button>
           </div>
         </div>
       )}
       {open && mode === "import" && (
-        <div className="kun-pop nodrag nowheel absolute left-0 right-0 z-40 mt-1 rounded-lg border border-line2 bg-card p-2 shadow-xl">
+        <div className="kun-pop nodrag nowheel absolute start-0 w-64 max-w-[calc(100vw-2rem)] z-40 mt-1 rounded-lg border border-line2 bg-card p-2 shadow-xl">
           <p className="mb-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-faint">
-            Import skills
+            {t("editor.skill.importTitle")}
           </p>
           <div className="flex gap-1.5">
             <input
@@ -466,8 +472,9 @@ export function SkillPicker({
               }}
               autoComplete="off"
               spellCheck={false}
-              aria-label="GitHub repo or skills folder URL"
-              placeholder="github.com/owner/repo or a skills folder URL…"
+              aria-label={t("editor.skill.repoLabel")}
+              dir="ltr"
+              placeholder={t("editor.skill.repoPlaceholder")}
               className="min-w-0 flex-1 rounded-md border border-line bg-sunken px-2 py-1 text-[11px] text-ink outline-none placeholder:text-faint"
             />
             <button
@@ -476,15 +483,14 @@ export function SkillPicker({
               disabled={pulling || !refInput.trim()}
               className="shrink-0 rounded-md bg-accent px-2 py-1 text-[10px] font-medium text-canvas disabled:opacity-50"
             >
-              {pulling ? "Pulling…" : "Pull"}
+              {pulling ? t("editor.skill.pulling") : t("editor.skill.pull")}
             </button>
           </div>
           <p className="mt-1 mb-2 text-[10px] leading-relaxed text-faint">
-            Pulls SKILL.md files from any public GitHub repo — the repo root, a
-            folder, or a raw SKILL.md URL.
+            {t("editor.skill.importHint")}
           </p>
           <label className="mb-2 flex cursor-pointer items-center justify-center rounded-md border border-line px-2 py-1.5 text-[10px] font-medium text-muted transition-colors hover:border-line2 hover:text-ink">
-            {importingFile ? "Importing…" : "Upload SKILL.md or skills bundle (.json)"}
+            {importingFile ? t("editor.skill.importing") : t("editor.skill.uploadFile")}
             <input
               type="file"
               accept=".md,.markdown,.json"
@@ -503,25 +509,26 @@ export function SkillPicker({
               onClick={() => setMode("list")}
               className="rounded px-2 py-1 text-[10px] text-faint hover:text-ink"
             >
-              Back
+              {t("common.back")}
             </button>
           </div>
         </div>
       )}
       {open && mode === "list" && (
-        <div className="kun-pop nodrag nowheel absolute left-0 right-0 z-40 mt-1 max-h-64 overflow-auto rounded-lg border border-line2 bg-card shadow-xl">
+        <div className="kun-pop nodrag nowheel absolute start-0 w-64 max-w-[calc(100vw-2rem)] z-40 mt-1 max-h-64 overflow-auto rounded-lg border border-line2 bg-card shadow-xl">
           <input
             autoFocus
             value={q}
             onChange={(e) => setQ(e.target.value)}
             autoComplete="off"
-            aria-label="Search skills"
-            placeholder="Search installed or skills.sh…"
+            aria-label={t("editor.skill.searchLabel")}
+            dir="auto"
+            placeholder={t("editor.skill.searchPlaceholder")}
             className="sticky top-0 w-full border-b border-line bg-sunken px-2 py-1.5 text-[11px] text-ink outline-none placeholder:text-faint"
           />
           {localHits.length === 0 && q.trim().length < 2 && (
             <p className="px-2 py-1.5 text-[10px] text-faint">
-              No skills yet — create one or import below.
+              {t("editor.skill.noneYet")}
             </p>
           )}
           {localHits.length > 0 && (
@@ -531,17 +538,17 @@ export function SkillPicker({
                   <button
                     type="button"
                     onClick={() => void pickInstalled(s)}
-                    className="flex min-w-0 flex-1 flex-col items-start px-2 py-1.5 text-left"
+                    className="flex min-w-0 flex-1 flex-col items-start px-2 py-1.5 text-start"
                   >
-                    <span className="text-[11px] text-ink/90">{s.displayName}</span>
-                    <span className="line-clamp-2 text-[10px] text-faint">
-                      {sourceLabel(s.source)} · {s.description || s.slug}
+                    <span dir="auto" className="text-[11px] text-ink/90">{s.displayName}</span>
+                    <span dir="auto" className="line-clamp-2 text-[10px] text-faint">
+                      {sourceLabel(t, s.source)} · {s.description || s.slug}
                     </span>
                   </button>
                   <button
                     type="button"
-                    title="Download SKILL.md"
-                    aria-label={`Download ${s.displayName} SKILL.md`}
+                    title={t("editor.skill.downloadMd")}
+                    aria-label={t("editor.skill.downloadNamed", { name: s.displayName })}
                     onClick={() => void downloadSkill(s)}
                     className="nodrag shrink-0 rounded px-1.5 py-1.5 text-[10px] text-faint transition-colors hover:text-ink"
                   >
@@ -553,8 +560,8 @@ export function SkillPicker({
           )}
           {(q.trim().length >= 2 || loading) && (
             <div className="border-t border-line py-1">
-              <p className="px-2 pb-1 font-mono text-[9px] uppercase tracking-[0.14em] text-faint">
-                {loading ? "Searching skills.sh…" : "skills.sh"}
+              <p className="px-2 pb-1 font-mono text-[9px] uppercase tracking-[0.14em] text-faint rtl:tracking-normal">
+                {loading ? t("editor.skill.searching") : "skills.sh"}
               </p>
               {remote
                 .filter((s) => !installed.some((i) => i.slug === s.slug || i.registryId === s.id))
@@ -563,17 +570,16 @@ export function SkillPicker({
                     key={s.id}
                     type="button"
                     onClick={() => void installRemote(s)}
-                    className="flex w-full flex-col items-start px-2 py-1.5 text-left hover:bg-ink/[0.04]"
+                    className="flex w-full flex-col items-start px-2 py-1.5 text-start hover:bg-ink/[0.04]"
                   >
                     <span className="text-[11px] text-ink/90">{s.displayName || s.slug}</span>
                     <span className="line-clamp-2 text-[10px] text-faint">
-                      {s.resolvable === false ? "Hosted elsewhere · " : "Install · "}
-                      {s.source}
+                      {s.resolvable === false ? t("editor.skill.hostedElsewhere") : t("editor.skill.install")} · {s.source}
                     </span>
                   </button>
                 ))}
               {!loading && q.trim().length >= 2 && remote.length === 0 && (
-                <p className="px-2 py-1.5 text-[10px] text-faint">No registry matches.</p>
+                <p className="px-2 py-1.5 text-[10px] text-faint">{t("editor.skill.noRegistry")}</p>
               )}
             </div>
           )}
@@ -581,24 +587,24 @@ export function SkillPicker({
             <button
               type="button"
               onClick={startCreate}
-              className="flex-1 px-2 py-1.5 text-left hover:bg-ink/[0.04]"
+              className="flex-1 px-2 py-1.5 text-start hover:bg-ink/[0.04]"
             >
-              + New skill
+              {t("editor.skill.newSkillButton")}
             </button>
             <button
               type="button"
               onClick={startImport}
-              className="border-l border-line px-2 py-1.5 hover:bg-ink/[0.04]"
+              className="border-s border-line px-2 py-1.5 hover:bg-ink/[0.04]"
             >
-              Import
+              {t("editor.skill.import")}
             </button>
             <button
               type="button"
               onClick={() => void exportLibrary()}
-              title="Download the whole library as a bundle"
-              className="border-l border-line px-2 py-1.5 hover:bg-ink/[0.04]"
+              title={t("editor.skill.exportAllTitle")}
+              className="border-s border-line px-2 py-1.5 hover:bg-ink/[0.04]"
             >
-              Export all
+              {t("editor.skill.exportAll")}
             </button>
           </div>
         </div>

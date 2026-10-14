@@ -3,6 +3,13 @@
  * the OpenRouter catalog (vendor-prefixed ids like "openai/gpt-5.2").
  */
 
+/**
+ * The text model a node falls back on when none is set. Must stay on
+ * OpenRouter's live catalog; a retired id makes every new project's first
+ * run fail. A cheap, fast, long-lived model suits a default.
+ */
+export const DEFAULT_TEXT_MODEL = "google/gemini-2.5-flash";
+
 export type ModelModality = "text" | "image" | "audio" | "video";
 export type NodeModelKind = "chat" | "image" | "audio" | "video";
 
@@ -13,6 +20,8 @@ export interface ModelInfo {
   outputs?: ModelModality[];
   /** Provider-listed TTS voices. Absent means we don't know — never assume a voice. */
   voices?: string[];
+  /** Unix seconds the provider added it; drives "newest" suggestions. */
+  created?: number;
 }
 
 export function kindForNode(nodeKind: string): NodeModelKind | null {
@@ -67,6 +76,8 @@ export function filterModels(
 /** Catalog state shared between /api/models and its client cache. */
 export interface ModelCatalogCore {
   models: Record<string, ModelInfo[]>;
+  /** Server-built "Suggested" shortlist per node kind (pins, usage, newest). */
+  suggested?: Partial<Record<NodeModelKind, ModelInfo[]>>;
   updatedAt: number;
   /** Providers whose last fetch failed, with a short reason. */
   errors?: Record<string, string>;
@@ -91,8 +102,11 @@ export function mergeRefresh(
     if (kept?.length) models[pid] = kept;
   }
   const failed = Object.entries(next.errors ?? {}).filter(([, e]) => e);
+  const failedAny = Object.values(next.errors ?? {}).some(Boolean);
   return {
     models,
+    // A failed fetch can't rebuild the shortlist; keep the last good one.
+    suggested: failedAny ? (prev.suggested ?? next.suggested) : next.suggested,
     updatedAt: next.updatedAt,
     errors: failed.length ? Object.fromEntries(failed) : undefined,
   };
@@ -118,6 +132,19 @@ export function liveList(
  * still lists; when every suggestion has been retired, any live model beats
  * an id that would 404 on run. Without live data, trust the suggestions.
  */
+/**
+ * The shortlist for a node: the server's dynamic suggestions when it sent
+ * any, else the node type's built-in picks.
+ */
+export function suggestionsFor(
+  catalog: { suggested?: Partial<Record<NodeModelKind, ModelInfo[]>> },
+  kind: NodeModelKind | null,
+  fallback: { id: string; label: string }[] = [],
+): { id: string; label: string }[] {
+  const dynamic = kind ? catalog.suggested?.[kind] : undefined;
+  return dynamic?.length ? dynamic : fallback;
+}
+
 export function pickDefaultModel(
   suggested: { id: string }[],
   live: ModelInfo[] | null,
@@ -152,6 +179,12 @@ export const PROVIDER_LABELS: Record<string, string> = {
   canopylabs: "Canopy Labs",
   heygen: "HeyGen",
   "black-forest-labs": "Black Forest Labs",
+  elevenlabs: "ElevenLabs",
+  recraft: "Recraft",
+  microsoft: "Microsoft",
+  mistralai: "Mistral",
+  "z-ai": "Z.ai",
+  moonshotai: "Moonshot",
 };
 
 /** Sentinel option value for the "Custom model…" entry. */

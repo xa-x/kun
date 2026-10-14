@@ -11,6 +11,7 @@ import {
   Sparkle,
   SpeakerHigh,
   TextAa,
+  UploadSimple,
   Waveform,
   type IconProps,
 } from "@phosphor-icons/react";
@@ -19,6 +20,7 @@ const ICONS: Record<string, ComponentType<IconProps>> = {
   text: TextAa,
   note: Note,
   skill: Sparkle,
+  "file.in": UploadSimple,
   "image.in": ImageIcon,
   "audio.in": Waveform,
   "video.in": FilmStrip,

@@ -1,10 +1,11 @@
+import { DEFAULT_TEXT_MODEL } from "./models";
 import type { GraphDoc } from "./types";
 
 export function emptyGraph(): GraphDoc {
   return { nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } };
 }
 
-/** Seed graph shown in a brand-new workbook. */
+/** Seed graph shown in a brand-new project. */
 export function starterGraph(): GraphDoc {
   const b = Date.now().toString(36);
   return {
@@ -26,15 +27,9 @@ export function starterGraph(): GraphDoc {
         data: {
           kind: "llm",
           label: "AI Text",
-          model: "stealth/ox-alpha",
+          model: DEFAULT_TEXT_MODEL,
           prompt: "Summarize the following article in 5 bullet points:",
         },
-      },
-      {
-        id: `o${b}`,
-        type: "flow",
-        position: { x: 750, y: 120 },
-        data: { kind: "out.text", label: "Text Out" },
       },
     ],
     edges: [
@@ -43,13 +38,6 @@ export function starterGraph(): GraphDoc {
         source: `t${b}`,
         sourceHandle: "out",
         target: `l${b}`,
-        targetHandle: "in",
-      },
-      {
-        id: `e2${b}`,
-        source: `l${b}`,
-        sourceHandle: "out",
-        target: `o${b}`,
         targetHandle: "in",
       },
     ],

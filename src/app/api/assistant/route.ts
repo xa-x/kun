@@ -15,6 +15,7 @@ import type { GraphDoc } from "@/lib/types";
 import { requireActor } from "@/lib/auth";
 import { assertWithinCredits } from "@/lib/runs/enqueue";
 import { meterModelCall } from "@/lib/metering";
+import { DEFAULT_TEXT_MODEL } from "@/lib/models";
 import { db } from "@/db";
 import { runNodes, runs } from "@/db/schema";
 
@@ -195,7 +196,7 @@ export async function POST(req: NextRequest) {
 Available node kinds:
 ${nodeCatalogPrompt()}
 
-Installed skills (use skillId = slug on skill / llm / image.gen / video.gen / tts nodes):
+Installed skills (set skillId = slug on an Instruction node, kind "note"):
 ${skillCatalogPrompt(installedSkills)}
 
 Current graph:
@@ -213,16 +214,18 @@ Rules:
 - Use the exact handle ids from the catalog. If unsure, omit sourceHandle/targetHandle — the canvas will pick a type-compatible pair (image→image, video→video, text→prompt).
 - Never connect an image or video port to a text/prompt handle.
 - Typical pipelines:
-  Image (image.in) → AI Image (image.gen, image→image) → Media Out (out.media, out→in)
-  Image (image.in) → AI Video (video.gen, out→image) → Media Out (out.media, out→video)
-  Text → AI Text (llm, out→in) → Output (out.text)
-  Skill (skill) → AI Text (llm, out→in) → AI Image (image.gen, out→prompt)
-- Prefer a skill node when the user wants a reusable Agent Skill. Set skillId to an installed slug. For image models, keep the full skill off the image prompt — wire Skill → AI Text → AI Image.
-- Edit the existing workbook in place. Do not rebuild from scratch unless the user asks.
+  File (file.in) → AI Image (image.gen, out→image)
+  File (file.in) → AI Video (video.gen, out→image)
+  Text → AI Text (llm, out→in) → AI Speech (tts, out→text)
+  Text → AI Text (llm, skillId set, out→in) → AI Image (image.gen, out→prompt)
+- When the user wants a reusable Agent Skill, add an Instruction node (kind "note") with skillId set to an installed slug and wire it into the text input of the AI node that should follow it (llm "in", image.gen / video.gen "prompt", tts "text"). AI nodes have no skill setting of their own. For image models, keep the full skill off the image prompt — wire the Instruction into an AI Text node first, and that into the AI Image.
+- There is one File node (file.in) for uploads and one handle, "out". Users upload the file themselves; you cannot.
+- There is no Output node. Every node shows its own result. The project's result is whatever nothing is wired out of, or the nodes the user pinned with Return.
+- Edit the existing project in place. Do not rebuild from scratch unless the user asks.
 - When the user @mentions a node, update that node (or nodes connected to it) instead of rebuilding the whole graph.
 - Prefer update_node over remove_node + add_node.
 - Use last-run errors to decide what to fix.
-- For image-edit workflows: Image (image.in) → AI Image (image.gen, connect image to the "image"/Reference handle, prompt to "prompt") → Media Out (out.media).
+- For image-edit workflows: File (file.in) → AI Image (image.gen, connect image to the "image"/Reference handle, prompt to "prompt").
 - Use stable short ids on add_node (e.g. "prompt1", "img1") and reference those same ids in connect/update/remove.
 - Use the correct handle ids from the catalog. Connect matching types only (text→text, image→image).
 - Media params (size, aspectRatio, duration, resolution, voice) are optional. Omit them unless the user asks — models have different supported values. Never invent a voice or size.
@@ -230,10 +233,7 @@ Rules:
 - Respond with one JSON object only, no markdown:
   { "reply": "short message to the user", "ops": [ ... ] }`;
 
-        const chatModel =
-          p.id === "openrouter"
-            ? "google/gemini-2.5-flash"
-            : "stealth/ox-alpha";
+        const chatModel = DEFAULT_TEXT_MODEL;
         const result = streamText({
           model: p.gw.chat(chatModel) as LanguageModel,
           system,

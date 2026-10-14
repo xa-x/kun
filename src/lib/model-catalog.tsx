@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import type { ModelInfo } from "./models";
-import { mergeRefresh } from "./models";
+import { mergeRefresh, type NodeModelKind } from "./models";
 import { readJson } from "./http";
 
 /**
@@ -21,13 +21,14 @@ import { readJson } from "./http";
 
 export interface ModelCatalog {
   models: Record<string, ModelInfo[]>;
+  suggested?: Partial<Record<NodeModelKind, ModelInfo[]>>;
   updatedAt: number;
   /** Providers whose last fetch failed — their lists may be stale. */
   errors?: Record<string, string>;
 }
 
 const EMPTY: ModelCatalog = { models: {}, updatedAt: 0 };
-const CACHE_KEY = "kun.catalog.v6";
+const CACHE_KEY = "kun.catalog.v7";
 /** Re-fetch when the tab regains focus, at most this often. */
 const FOCUS_REFETCH_MS = 15 * 60_000;
 
@@ -74,6 +75,7 @@ export function useModelCatalog(
       .then((r) =>
         readJson<{
           models?: Record<string, ModelInfo[]>;
+          suggested?: ModelCatalog["suggested"];
           errors?: Record<string, string>;
         }>(r),
       )
@@ -81,6 +83,10 @@ export function useModelCatalog(
         const incoming: ModelCatalog = {
           models:
             data?.models && typeof data.models === "object" ? data.models : {},
+          suggested:
+            data?.suggested && typeof data.suggested === "object"
+              ? data.suggested
+              : undefined,
           updatedAt: Date.now(),
           errors:
             data?.errors && typeof data.errors === "object"

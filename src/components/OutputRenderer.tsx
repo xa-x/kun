@@ -3,23 +3,24 @@
 import { useMemo, useState } from "react";
 import { mdToHtml, parseTextOutput, type OutputBlock } from "@/lib/render";
 import type { NodeOutput } from "@/lib/types";
+import { useI18n } from "@/lib/i18n";
 
 /**
  * Universal output renderer — renders whatever the model responded with.
  * Full HTML pages/apps preview in a sandboxed iframe; markdown becomes
  * prose; JSON gets a viewer; bare media URLs become elements.
  */
-function playableSrc(src: string) {
+export function playableSrc(src: string) {
   if (!src || src.startsWith("data:") || src.startsWith("blob:")) return src;
   return src.includes("?") ? `${src}&play=1` : `${src}?play=1`;
 }
 
-function downloadHref(src: string) {
+export function downloadHref(src: string) {
   if (!src || src.startsWith("data:") || src.startsWith("blob:")) return src;
   return src.includes("?") ? `${src}&download=1` : `${src}?download=1`;
 }
 
-function filenameFor(kind: string, src: string) {
+export function filenameFor(kind: string, src: string) {
   const fromUrl = src.split("?")[0].split("/").pop();
   if (fromUrl && fromUrl.includes(".")) return fromUrl;
   const ext =
@@ -53,7 +54,14 @@ function triggerDownload(href: string, filename: string) {
   a.remove();
 }
 
-export function OutputRenderer({ output }: { output: NodeOutput }) {
+export function OutputRenderer({
+  output,
+  hint,
+}: {
+  output: NodeOutput;
+  /** width / height the node was asked for, used until the media loads */
+  hint?: number;
+}) {
   if (output.type === "text") {
     const blocks = parseTextOutput(output.text ?? "");
     return (
@@ -64,7 +72,7 @@ export function OutputRenderer({ output }: { output: NodeOutput }) {
       </div>
     );
   }
-  if (output.url) return <MediaEmbed kind={output.type} src={output.url} />;
+  if (output.url) return <MediaEmbed kind={output.type} src={output.url} hint={hint} />;
   return null;
 }
 
@@ -75,6 +83,7 @@ function BlockView({ block }: { block: OutputBlock }) {
     case "md":
       return (
         <div
+          dir="auto"
           className="kun-prose nowheel max-h-[420px] overflow-auto rounded-lg border border-line bg-sunken px-3 py-2.5"
           dangerouslySetInnerHTML={{ __html: mdToHtml(block.text) }}
         />
@@ -90,6 +99,7 @@ function BlockView({ block }: { block: OutputBlock }) {
 
 /** Live preview of generated pages/apps inside a locked-down iframe. */
 function HtmlPreview({ code }: { code: string }) {
+  const { t } = useI18n();
   const [view, setView] = useState<"preview" | "code">("preview");
   const [copied, setCopied] = useState(false);
   const src = useMemo(() => `data:text/html;charset=utf-8,${encodeURIComponent(code)}`, [code]);
@@ -107,7 +117,7 @@ function HtmlPreview({ code }: { code: string }) {
   return (
     <div className="nowheel overflow-hidden rounded-lg border border-line bg-sunken">
       <div className="flex items-center justify-between border-b border-line px-2 py-1">
-        <div className="flex items-center gap-0.5 font-mono text-[9px] uppercase tracking-[0.14em]">
+        <div className="flex items-center gap-0.5 font-mono text-[9px] uppercase tracking-[0.14em] rtl:tracking-normal">
           {(["preview", "code"] as const).map((v) => (
             <button
               key={v}
@@ -116,22 +126,22 @@ function HtmlPreview({ code }: { code: string }) {
                 view === v ? "bg-ink/[0.07] text-ink" : "text-faint hover:text-muted"
               }`}
             >
-              {v}
+              {v === "preview" ? t("editor.output.preview") : t("editor.output.code")}
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.14em]">
+        <div className="flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.14em] rtl:tracking-normal">
           <a
             href={src}
             target="_blank"
             rel="noopener noreferrer"
-            title="Open in new tab"
+            title={t("editor.output.openTitle")}
             className="text-faint transition-colors hover:text-live"
           >
-            Open ↗
+            {t("editor.output.open")}
           </a>
           <button onClick={copy} className="text-faint transition-colors hover:text-live">
-            {copied ? "Copied ✓" : "Copy"}
+            {copied ? t("editor.output.copiedCheck") : t("editor.output.copy")}
           </button>
         </div>
       </div>
@@ -141,10 +151,10 @@ function HtmlPreview({ code }: { code: string }) {
           sandbox="allow-scripts allow-forms allow-popups allow-modals"
           referrerPolicy="no-referrer"
           srcDoc={code}
-          title="Generated page"
+          title={t("editor.output.generatedPage")}
         />
       ) : (
-        <pre className="max-h-[340px] overflow-auto whitespace-pre-wrap px-3 py-2.5 font-mono text-[11px] leading-relaxed text-ink/85">
+        <pre dir="ltr" className="max-h-[340px] overflow-auto whitespace-pre-wrap px-3 py-2.5 font-mono text-[11px] leading-relaxed text-ink/85">
           {code}
         </pre>
       )}
@@ -153,6 +163,7 @@ function HtmlPreview({ code }: { code: string }) {
 }
 
 function CodeBlock({ lang, text }: { lang: string; text: string }) {
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
@@ -164,14 +175,14 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
   return (
     <div className="nowheel overflow-hidden rounded-lg border border-line bg-sunken">
       <div className="flex items-center justify-between border-b border-line px-2.5 py-1.5">
-        <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-faint">
+        <span dir="ltr" className="font-mono text-[9px] uppercase tracking-[0.14em] text-faint">
           {lang || "code"}
         </span>
-        <button onClick={copy} className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted transition-colors hover:text-live">
-          {copied ? "Copied ✓" : "Copy"}
+        <button onClick={copy} className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted transition-colors hover:text-live rtl:tracking-normal">
+          {copied ? t("editor.output.copiedCheck") : t("editor.output.copy")}
         </button>
       </div>
-      <pre className="max-h-64 overflow-auto whitespace-pre-wrap px-3 py-2.5 font-mono text-[11px] leading-relaxed text-ink/85">
+      <pre dir="ltr" className="max-h-64 overflow-auto whitespace-pre-wrap px-3 py-2.5 font-mono text-[11px] leading-relaxed text-ink/85">
         {text}
       </pre>
     </div>
@@ -179,6 +190,7 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
 }
 
 function JsonViewer({ text }: { text: string }) {
+  const { t, tn } = useI18n();
   const pretty = useMemo(() => {
     try {
       return JSON.stringify(JSON.parse(text), null, 2);
@@ -188,34 +200,84 @@ function JsonViewer({ text }: { text: string }) {
   }, [text]);
   return (
     <details className="kun-json nowheel overflow-hidden rounded-lg border border-line bg-sunken">
-      <summary className="cursor-pointer list-none px-2.5 py-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-faint transition-colors hover:text-muted">
-        {"{ }"} JSON · {pretty.split("\n").length.toLocaleString()} lines
+      <summary className="cursor-pointer list-none px-2.5 py-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-faint transition-colors hover:text-muted rtl:tracking-normal">
+        <bdi>{"{ }"} {t("editor.output.json")}</bdi> · {tn("editor.output.lines", pretty.split("\n").length)}
       </summary>
-      <pre className="max-h-72 overflow-auto border-t border-line px-3 py-2.5 font-mono text-[11px] leading-relaxed text-ink/85">
+      <pre dir="ltr" className="max-h-72 overflow-auto border-t border-line px-3 py-2.5 font-mono text-[11px] leading-relaxed text-ink/85">
         {pretty}
       </pre>
     </details>
   );
 }
 
-function MediaEmbed({ kind, src }: { kind: string; src: string }) {
+/** The tallest a preview grows inside a node. */
+const MEDIA_MAX_H = 240;
+
+/**
+ * A frame that takes the media's own shape: wide clips wide, portrait clips
+ * narrow and centred, square ones square. No letterbox bars, no cropping. It
+ * starts from the shape the node was asked for (`hint`) and corrects itself
+ * once the file reports its real size.
+ */
+function Framed({
+  ratio,
+  children,
+}: {
+  ratio: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      className="kun-media relative mx-auto overflow-hidden bg-black/30"
+      style={{
+        aspectRatio: ratio,
+        width: `min(100%, ${Math.round(MEDIA_MAX_H * ratio)}px)`,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function MediaEmbed({
+  kind,
+  src,
+  hint,
+}: {
+  kind: string;
+  src: string;
+  hint?: number;
+}) {
+  const { t } = useI18n();
+  const [measured, setMeasured] = useState<number | null>(null);
+  const ratio = measured ?? hint ?? (kind === "video" ? 16 / 9 : 1);
   const file = filenameFor(kind, src);
   const link = (
     <a
       href={downloadHref(src)}
       download={file}
-      title="Download"
-      className="absolute right-2 top-2 z-10 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-medium text-white/95 opacity-0 backdrop-blur transition-opacity hover:bg-black/80 focus-visible:opacity-100 group-hover:opacity-100"
+      title={t("editor.output.download")}
+      className="absolute end-2 top-2 z-10 rounded-full bg-black/60 px-2.5 py-1 text-[11px] font-medium text-white/95 opacity-0 backdrop-blur transition-opacity hover:bg-black/80 focus-visible:opacity-100 group-hover:opacity-100"
     >
-      Save
+      {t("editor.output.save")}
     </a>
   );
   if (kind === "image")
     return (
       <div className="group relative">
         {link}
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={src} alt="" className="kun-media nowheel max-h-56 w-full object-cover" />
+        <Framed ratio={ratio}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={src}
+            alt=""
+            onLoad={(e) => {
+              const { naturalWidth: w, naturalHeight: h } = e.currentTarget;
+              if (w && h) setMeasured(w / h);
+            }}
+            className="nowheel h-full w-full object-contain"
+          />
+        </Framed>
       </div>
     );
   if (kind === "audio")
@@ -234,13 +296,19 @@ function MediaEmbed({ kind, src }: { kind: string; src: string }) {
     return (
       <div className="group relative">
         {link}
-        <video
-          controls
-          playsInline
-          preload="metadata"
-          src={src}
-          className="kun-media nowheel max-h-56 w-full bg-black"
-        />
+        <Framed ratio={ratio}>
+          <video
+            controls
+            playsInline
+            preload="metadata"
+            src={src}
+            onLoadedMetadata={(e) => {
+              const { videoWidth: w, videoHeight: h } = e.currentTarget;
+              if (w && h) setMeasured(w / h);
+            }}
+            className="nowheel h-full w-full bg-black object-contain"
+          />
+        </Framed>
       </div>
     );
   return null;

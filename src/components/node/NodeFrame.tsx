@@ -1,9 +1,12 @@
+import { Elapsed } from "./Elapsed";
+import { useI18n } from "@/lib/i18n";
+import { nodeLabel, portLabel } from "@/lib/i18n/nodes";
 import type { CSSProperties, ReactNode } from "react";
 import { Check, CircleNotch, Clock, WarningCircle } from "@phosphor-icons/react";
 import type { NodeTypeDef, PortDef } from "@/lib/nodes";
 import type { RunStatus } from "@/lib/types";
 import { NodeKindIcon } from "./icons";
-import { PORT_COLOR, PORT_NAME } from "./tokens";
+import { PORT_COLOR, PORT_TYPE_KEY } from "./tokens";
 
 /**
  * The card chrome shared by every node: icon chip + title, a rail of typed
@@ -83,6 +86,10 @@ export function NodeFrame({
   status = "idle",
   selected = false,
   cost,
+  estimate,
+  startedAt,
+  frozen = false,
+  badges,
   wide = false,
   connected,
   renderHandle,
@@ -94,6 +101,14 @@ export function NodeFrame({
   status?: RunStatus;
   selected?: boolean;
   cost?: string | null;
+  /** "~$0.93 · ~5 min", shown before a run; replaced by the real cost after. */
+  estimate?: string | null;
+  /** ms epoch the node started running, for the elapsed timer. */
+  startedAt?: number;
+  /** Kept as it is: not run again. */
+  frozen?: boolean;
+  /** Small state marks beside the title (frozen, returned). */
+  badges?: ReactNode;
   wide?: boolean;
   connected?: ConnectedPorts;
   /** Canvas passes React Flow handles; static previews get plain dots. */
@@ -101,13 +116,22 @@ export function NodeFrame({
   toolbar?: ReactNode;
   children?: ReactNode;
 }) {
+  const { t } = useI18n();
   const { placements, railHeight } = portPlacements(def, connected);
+  // A name saved in English as the default (the kind's label, or "Prompt" on a
+  // text node) is shown in the active language.
+  const title =
+    !label || label === def.label
+      ? nodeLabel(t, def.type, def.label)
+      : label === "Prompt" && def.type === "text"
+        ? portLabel(t, label)
+        : label;
   const showLabel = (p: PortPlacement) =>
     p.side === "in" || def.outputs.length > 1;
 
   return (
     <div
-      className={`kun-node group ${wide ? "w-[348px]" : "w-[276px]"} st-${status} ${selected ? "is-selected" : ""}`}
+      className={`kun-node group ${wide ? "w-[348px]" : "w-[276px]"} st-${status} ${selected ? "is-selected" : ""} ${frozen ? "is-frozen" : ""}`}
       style={{ "--node-accent": def.color } as CSSProperties}
     >
       {status === "running" && <span className="kun-shimmer" />}
@@ -120,15 +144,23 @@ export function NodeFrame({
         <span className="kun-node__chip">
           <NodeKindIcon kind={def.type} />
         </span>
-        <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-ink">
-          {label || def.label}
+        <span dir="auto" className="min-w-0 flex-1 truncate text-start text-[13px] font-medium text-ink">
+          {title}
         </span>
+        {badges}
         {cost ? (
-          <span className="font-mono text-[10px] text-faint" title="Node cost">
+          <span className="font-mono text-[10px] text-faint" title={t("canvas.frame.nodeCost")}>
             {cost}
           </span>
+        ) : estimate && status !== "running" && status !== "queued" ? (
+          <span
+            className="font-mono text-[10px] text-faint"
+            title={t("canvas.frame.estimateTip")}
+          >
+            {estimate}
+          </span>
         ) : null}
-        <StatusBadge status={status} />
+        <StatusBadge status={status} startedAt={startedAt} />
       </header>
 
       {railHeight > 0 && (
@@ -141,7 +173,7 @@ export function NodeFrame({
               }`}
               style={{ top: p.top - HEADER_H - 8 }}
             >
-              {p.port.label}
+              <span dir="auto">{portLabel(t, p.port.label)}</span>
             </span>
           ))}
         </div>
@@ -154,7 +186,7 @@ export function NodeFrame({
           <span
             key={`${p.side}-${p.port.id}`}
             style={handleStyle(p)}
-            title={`${p.port.label} (${PORT_NAME[p.port.type]})`}
+            title={t("canvas.portTip", { label: portLabel(t, p.port.label), type: t(PORT_TYPE_KEY[p.port.type]) })}
           />
         ),
       )}
@@ -164,38 +196,46 @@ export function NodeFrame({
   );
 }
 
-export function StatusBadge({ status }: { status: RunStatus }) {
+export function StatusBadge({
+  status,
+  startedAt,
+}: {
+  status: RunStatus;
+  startedAt?: number;
+}) {
+  const { t } = useI18n();
   if (status === "running")
     return (
       <span className="flex items-center gap-1 text-[11px] font-medium text-live">
         <CircleNotch size={12} weight="bold" className="kun-spin" aria-hidden />
-        Running
+        {t("canvas.status.running")}
+        {startedAt ? <Elapsed since={startedAt} /> : null}
       </span>
     );
   if (status === "queued")
     return (
       <span className="flex items-center gap-1 text-[11px] text-muted">
         <Clock size={12} weight="bold" aria-hidden />
-        Queued
+        {t("canvas.status.queued")}
       </span>
     );
   if (status === "done")
     return (
       <span
         className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-ok/15 text-ok"
-        title="Done"
+        title={t("canvas.status.done")}
       >
-        <Check size={11} weight="bold" aria-label="Done" />
+        <Check size={11} weight="bold" aria-label={t("canvas.status.done")} />
       </span>
     );
   if (status === "error")
     return (
       <span className="flex items-center gap-1 text-[11px] font-medium text-err">
         <WarningCircle size={13} weight="bold" aria-hidden />
-        Failed
+        {t("canvas.status.failed")}
       </span>
     );
   if (status === "skipped")
-    return <span className="text-[11px] text-faint">Skipped</span>;
+    return <span className="text-[11px] text-faint">{t("canvas.status.skipped")}</span>;
   return null;
 }

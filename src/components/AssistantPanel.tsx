@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PaperPlaneTilt, Sparkle, X } from "@phosphor-icons/react";
 import { nodeDef } from "@/lib/nodes";
+import { useI18n } from "@/lib/i18n";
+import { nodeLabel } from "@/lib/i18n/nodes";
 import {
   applyGraphOps,
   type AssistantMention,
@@ -16,19 +18,29 @@ interface ChatRow extends AssistantMessage {
   id: string;
 }
 
+const STARTERS = [
+  "editor.assistant.starter1",
+  "editor.assistant.starter2",
+  "editor.assistant.starter3",
+] as const;
+
 export function AssistantPanel({
   graphId,
   graph,
   selectedNodeIds,
   onApply,
   onClose,
+  autoPrompt,
 }: {
   graphId: string;
   graph: GraphDoc;
+  /** Sent once on open: the first-run prompt typed on the Projects page. */
+  autoPrompt?: string;
   selectedNodeIds?: string[];
   onApply: (next: GraphDoc) => void;
   onClose: () => void;
 }) {
+  const { t, num } = useI18n();
   const storageKey = `kun.assistant.${graphId}`;
   const [rows, setRows] = useState<ChatRow[]>([]);
   const [draft, setDraft] = useState("");
@@ -45,8 +57,10 @@ export function AssistantPanel({
       if (!raw) return;
       const parsed = JSON.parse(raw) as ChatRow[];
       // Restored after mount so the server and first client render agree.
+      // Never replace a conversation that is already under way (the first-run
+      // prompt can be sent before this restore lands).
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      if (Array.isArray(parsed)) setRows(parsed);
+      if (Array.isArray(parsed)) setRows((cur) => (cur.length ? cur : parsed));
     } catch {
       /* ignore */
     }
@@ -65,7 +79,7 @@ export function AssistantPanel({
     return graph.nodes
       .map((n) => ({
         id: n.id,
-        label: n.data.label || nodeDef(n.data.kind)?.label || n.data.kind,
+        label: n.data.label || nodeLabel(t, n.data.kind, nodeDef(n.data.kind)?.label ?? n.data.kind),
         kind: n.data.kind,
         color: nodeDef(n.data.kind)?.color ?? "#8a8a8a",
       }))
@@ -77,7 +91,7 @@ export function AssistantPanel({
             n.kind.toLowerCase().includes(q)),
       )
       .slice(0, 8);
-  }, [graph.nodes, mentionQ, mentions]);
+  }, [graph.nodes, mentionQ, mentions, t]);
 
   const pickMention = (n: AssistantMention) => {
     setMentions((xs) => [...xs, n]);
@@ -99,14 +113,14 @@ export function AssistantPanel({
     }
   };
 
-  const send = async () => {
-    const text = draft.trim();
+  const send = async (override?: string) => {
+    const text = (override ?? draft).trim();
     if (!text && !mentions.length) return;
     if (busy) return;
     const user: ChatRow = {
       id: `u${Date.now().toString(36)}`,
       role: "user",
-      content: text || "Update the mentioned nodes.",
+      content: text || t("editor.assistant.updateMentioned"),
       mentions: mentions.length ? mentions : undefined,
     };
     const nextRows = [...rows, user];
@@ -139,7 +153,7 @@ export function AssistantPanel({
       });
       if (!res.ok) {
         const err = await res.text();
-        throw new Error(err.slice(0, 180) || `Assistant failed (${res.status})`);
+        throw new Error(err.slice(0, 180) || t("editor.assistant.failedStatus", { status: res.status }));
       }
       const reader = res.body!.getReader();
       const dec = new TextDecoder();
@@ -170,12 +184,12 @@ export function AssistantPanel({
             onApply(applyGraphOps(graph, ev.ops));
             toast(
               ev.ops.length === 1
-                ? "Updated the canvas."
-                : `Applied ${ev.ops.length} canvas changes.`,
+                ? t("editor.assistant.updatedCanvas")
+                : t("editor.assistant.appliedChanges", { n: num(ev.ops.length) }),
               "ok",
             );
           } else if (ev.type === "error") {
-            throw new Error(ev.error || "Assistant failed");
+            throw new Error(ev.error || t("editor.assistant.failed"));
           }
         }
       }
@@ -183,18 +197,18 @@ export function AssistantPanel({
         setRows((xs) =>
           xs.map((r) =>
             r.id === assistantId
-              ? { ...r, content: "Done — I updated the canvas." }
+              ? { ...r, content: t("editor.assistant.doneReply") }
               : r,
           ),
         );
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Assistant failed";
+      const msg = e instanceof Error ? e.message : t("editor.assistant.failed");
       toast(msg, "error");
       setRows((xs) =>
         xs.map((r) =>
           r.id === assistantId
-            ? { ...r, content: r.content || `Couldn’t apply that: ${msg}` }
+            ? { ...r, content: r.content || t("editor.assistant.couldntApply", { msg }) }
             : r,
         ),
       );
@@ -203,10 +217,23 @@ export function AssistantPanel({
     }
   };
 
+  // A prompt carried over from the Projects page goes out once, then leaves
+  // the URL so a refresh doesn't ask the assistant again.
+  const autoSent = useRef(false);
+  useEffect(() => {
+    if (!autoPrompt || autoSent.current) return;
+    autoSent.current = true;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("prompt");
+    window.history.replaceState(null, "", url.pathname + url.search);
+    void send(autoPrompt);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPrompt]);
+
   return (
     <aside
-      aria-label="Assistant"
-      className="kun-pop z-30 flex min-h-0 w-[388px] shrink-0 flex-col border-l border-line bg-card max-md:absolute max-md:inset-0 max-md:w-full max-md:border-l-0"
+      aria-label={t("editor.assistant.title")}
+      className="kun-pop z-30 flex min-h-0 w-[388px] shrink-0 flex-col border-s border-line bg-card max-md:absolute max-md:inset-x-0 max-md:bottom-0 max-md:h-[62%] max-md:w-full max-md:rounded-t-2xl max-md:border-s-0 max-md:border-t max-md:shadow-[0_-24px_48px_-24px_rgba(0,0,0,0.65)]"
     >
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-line px-4">
         <div className="flex items-center gap-2.5">
@@ -215,15 +242,15 @@ export function AssistantPanel({
           </span>
           <div>
             <p className="text-[13.5px] font-medium leading-none text-ink">
-              Assistant
+              {t("editor.assistant.title")}
             </p>
           </div>
         </div>
         <button
           type="button"
           onClick={onClose}
-          title="Close assistant"
-          aria-label="Close assistant"
+          title={t("editor.assistant.close")}
+          aria-label={t("editor.assistant.close")}
           className="flex h-8 w-8 items-center justify-center rounded-full text-faint transition-colors hover:bg-ink/8 hover:text-ink"
         >
           <X size={14} weight="bold" aria-hidden />
@@ -233,14 +260,29 @@ export function AssistantPanel({
       <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-auto px-4 py-4">
         {!rows.length && (
           <div className="rounded-2xl border border-dashed border-line2 px-4 py-5 text-[13px] leading-relaxed text-muted">
-            <p className="font-medium text-ink">Describe a pipeline.</p>
+            <p className="font-medium text-ink">{t("editor.assistant.empty")}</p>
             <p className="mt-1">
-              I&apos;ll place and wire the nodes. Type{" "}
-              <kbd className="rounded bg-ink/10 px-1.5 py-0.5 font-mono text-[11px] text-ink">
+              {t("editor.assistant.emptyBefore")}{" "}
+              <kbd dir="ltr" className="rounded bg-ink/10 px-1.5 py-0.5 font-mono text-[11px] text-ink">
                 @
               </kbd>{" "}
-              to mention a node and edit it.
+              {t("editor.assistant.emptyAfter")}
             </p>
+            <div className="mt-3 flex flex-col items-start gap-1.5">
+              {STARTERS.map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => {
+                    setDraft(t(k));
+                    inputRef.current?.focus();
+                  }}
+                  className="rounded-full border border-line px-3 py-1.5 text-start text-[12.5px] text-ink transition-colors hover:border-line2 hover:bg-ink/5 active:scale-[0.98]"
+                >
+                  {t(k)}
+                </button>
+              ))}
+            </div>
           </div>
         )}
         {rows.map((r) => (
@@ -248,7 +290,7 @@ export function AssistantPanel({
             key={r.id}
             className={`max-w-[90%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed ${
               r.role === "user"
-                ? "ml-auto bg-ink text-canvas"
+                ? "ms-auto bg-ink text-canvas"
                 : "bg-sunken text-ink"
             }`}
           >
@@ -263,12 +305,12 @@ export function AssistantPanel({
                         : "bg-ink/10 text-muted"
                     }`}
                   >
-                    @{m.label}
+                    @<bdi>{m.label}</bdi>
                   </span>
                 ))}
               </div>
             ) : null}
-            <p className="whitespace-pre-wrap">
+            <p dir="auto" className="whitespace-pre-wrap">
               {r.content || (busy && r.role === "assistant" ? "…" : "")}
             </p>
           </div>
@@ -286,13 +328,13 @@ export function AssistantPanel({
                   setMentions((xs) => xs.filter((x) => x.id !== m.id))
                 }
                 className="inline-flex items-center gap-1.5 rounded-full border border-line bg-sunken px-2.5 py-0.5 text-[11.5px] text-ink hover:border-line2"
-                title="Remove mention"
+                title={t("editor.assistant.removeMention")}
               >
                 <span
                   className="h-1.5 w-1.5 rounded-full"
                   style={{ background: nodeDef(m.kind)?.color ?? "var(--color-muted)" }}
                 />
-                @{m.label}
+                @<bdi>{m.label}</bdi>
               </button>
             ))}
           </div>
@@ -305,14 +347,14 @@ export function AssistantPanel({
                   key={n.id}
                   type="button"
                   onClick={() => pickMention(n)}
-                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left hover:bg-ink/5"
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-start hover:bg-ink/5"
                 >
                   <span
                     className="h-1.5 w-1.5 rounded-full"
                     style={{ background: n.color }}
                   />
-                  <span className="truncate text-[12.5px] text-ink">{n.label}</span>
-                  <span className="ml-auto text-[11px] text-faint">{n.kind}</span>
+                  <span dir="auto" className="truncate text-[12.5px] text-ink">{n.label}</span>
+                  <span dir="ltr" className="ms-auto text-[11px] text-faint">{n.kind}</span>
                 </button>
               ))}
             </div>
@@ -328,23 +370,24 @@ export function AssistantPanel({
               }
               if (e.key === "Escape") setMentionOpen(false);
             }}
-            aria-label="Message the assistant"
-            placeholder="Build a flow. Use @ to mention a node."
+            aria-label={t("editor.assistant.messageLabel")}
+            placeholder={t("editor.assistant.placeholder")}
+            dir="auto"
             rows={3}
             disabled={busy}
             className="kun-field resize-none disabled:opacity-60"
           />
         </div>
         <div className="mt-2.5 flex items-center justify-between">
-          <span className="text-[12px] text-faint">Enter to send</span>
+          <span className="text-[12px] text-faint">{t("editor.assistant.enterToSend")}</span>
           <button
             type="button"
             onClick={() => void send()}
             disabled={busy || (!draft.trim() && !mentions.length)}
             className="kun-btn-primary inline-flex h-9 items-center gap-1.5 rounded-full px-4 text-[13px] font-medium disabled:opacity-40"
           >
-            {busy ? "Working…" : "Send"}
-            {!busy && <PaperPlaneTilt size={13} weight="fill" aria-hidden />}
+            {busy ? t("editor.assistant.working") : t("editor.assistant.send")}
+            {!busy && <PaperPlaneTilt size={13} weight="fill" className="rtl-flip" aria-hidden />}
           </button>
         </div>
       </div>

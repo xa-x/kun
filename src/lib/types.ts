@@ -38,6 +38,21 @@ export interface NodeData {
   resolution?: string; // video WxH, e.g. 1920x1080
   temperature?: number;
   artifactId?: string; // uploaded media
+  mediaType?: "image" | "audio" | "video"; // what a File node holds
+  /** Comment tint, or a group frame's tint. */
+  tone?: "sand" | "mint" | "sky" | "rose";
+  /**
+   * Keep this node's last result and do not run it again: a finished or draft
+   * generation that should not be paid for on every Run.
+   */
+  frozen?: boolean;
+  /** Return this node's result as (part of) the project's result. */
+  pinned?: boolean;
+  /** Id of the group frame this node sits in. */
+  group?: string;
+  /** Size of a group frame, in canvas pixels. */
+  w?: number;
+  h?: number;
   skillId?: string; // Agent Skill slug or org skill id
   // runtime decoration (not persisted into node defs):
   status?: "idle" | "queued" | "running" | "done" | "error";
@@ -79,6 +94,10 @@ export type FlowNodeData = NodeData & {
   streamingText?: string;
   /** last run usage for this node */
   runUsage?: UsageInfo;
+  /** when this node started running (ms epoch), for the elapsed timer */
+  runStartedAt?: number;
+  /** how long the last run took */
+  runDurationMs?: number;
 };
 
 export interface UsageInfo {

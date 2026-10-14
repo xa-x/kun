@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { NODE_TYPES, matchPorts, nodeDef } from "./nodes";
+import { canonicalKind, matchPorts, nodeDef, visibleNodeTypes } from "./nodes";
 import { placeAddedNodes } from "./layout";
 import type { GraphDoc } from "./types";
 
@@ -85,7 +85,7 @@ export function skillCatalogPrompt(
 }
 
 export function nodeCatalogPrompt() {
-  return NODE_TYPES.map((d) => {
+  return visibleNodeTypes.filter((d) => d.category !== "note").map((d) => {
     const ins = d.inputs.map((p) => `${p.id}:${p.type}`).join(", ") || "none";
     const outs = d.outputs.map((p) => `${p.id}:${p.type}`).join(", ") || "none";
     const models = d.models?.map((m) => m.id).join(", ");
@@ -130,8 +130,11 @@ export function applyGraphOps(doc: GraphDoc, ops: GraphOp[]): GraphDoc {
 
   for (const op of ops) {
     if (op.op === "add_node") {
-      const def = nodeDef(op.kind);
-      if (!def) continue;
+      // Models trained on older catalogs still ask for retired kinds.
+      const kind = canonicalKind(op.kind);
+      const def = nodeDef(kind);
+      // Retired kinds (Output) are not added: every node shows its own result.
+      if (!def || def.legacy) continue;
       let id = (op.id ?? "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 32);
       if (!id || nodes.some((n) => n.id === id)) id = nid();
       if (op.id) aliases.set(op.id, id);
@@ -144,7 +147,7 @@ export function applyGraphOps(doc: GraphDoc, ops: GraphOp[]): GraphDoc {
           y: op.y ?? 120 + added * 170,
         },
         data: {
-          kind: op.kind,
+          kind,
           label: op.label ?? def.label,
           text: op.text,
           prompt: op.prompt,

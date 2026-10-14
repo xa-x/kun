@@ -1,12 +1,12 @@
 "use client";
 
 import { useStore, useReactFlow } from "@xyflow/react";
+import { useI18n } from "@/lib/i18n";
 import { ArrowsOut, MapTrifold, Minus, Plus, TreeStructure } from "@phosphor-icons/react";
 
 /**
- * One tidy pill for everything that acts on the view: zoom, fit, arrange and
- * the minimap. It replaces the stock React Flow controls and the scattered
- * top-right buttons.
+ * One pill along the foot of the canvas for everything that acts on the view:
+ * zoom, fit, arrange and the minimap. The left edge belongs to the node tools.
  */
 export function CanvasToolbar({
   onArrange,
@@ -19,54 +19,56 @@ export function CanvasToolbar({
   onToggleMinimap: () => void;
   readOnly?: boolean;
 }) {
+  const { t, num } = useI18n();
   const rf = useReactFlow();
   const zoom = useStore((s) => Math.round(s.transform[2] * 100));
 
   const btn =
-    "flex h-8 w-8 items-center justify-center rounded-full text-muted transition-colors hover:bg-ink/8 hover:text-ink";
+    "flex h-9 w-9 items-center justify-center rounded-xl text-muted transition-colors hover:bg-ink/8 hover:text-ink active:scale-[0.94]";
 
   return (
     <div
       role="toolbar"
-      aria-label="Canvas view"
-      className="flex items-center gap-0.5 rounded-full border border-line2 bg-raised/95 p-1 shadow-xl shadow-black/30 backdrop-blur"
+      aria-label={t("editor.view.label")}
+      className="flex items-center gap-0.5 rounded-[18px] border border-line2 bg-raised/90 p-1 shadow-[0_14px_32px_-16px_rgba(0,0,0,0.7)] backdrop-blur-xl"
     >
       <button
         type="button"
         className={btn}
         onClick={() => void rf.zoomOut({ duration: 150 })}
-        aria-label="Zoom out"
-        title="Zoom out"
+        aria-label={t("editor.view.zoomOut")}
+        title={t("editor.view.zoomOut")}
       >
         <Minus size={14} weight="bold" aria-hidden />
       </button>
+
       <button
         type="button"
         onClick={() => void rf.zoomTo(1, { duration: 150 })}
-        title="Reset to 100%"
-        aria-label={`Zoom ${zoom} percent. Reset to 100 percent`}
-        className="h-8 min-w-[48px] rounded-full px-1 font-mono text-[12px] tabular-nums text-ink transition-colors hover:bg-ink/8"
+        title={t("editor.view.resetTitle")}
+        aria-label={t("editor.view.zoomAria", { n: num(zoom) })}
+        dir="ltr"
+        className="h-8 w-12 rounded-lg font-mono text-[11.5px] tabular-nums text-ink transition-colors hover:bg-ink/8"
       >
-        {zoom}%
+        {num(zoom)}%
       </button>
       <button
         type="button"
         className={btn}
         onClick={() => void rf.zoomIn({ duration: 150 })}
-        aria-label="Zoom in"
-        title="Zoom in"
+        aria-label={t("editor.view.zoomIn")}
+        title={t("editor.view.zoomIn")}
       >
         <Plus size={14} weight="bold" aria-hidden />
       </button>
-
-      <span className="mx-1 h-4 w-px bg-line2" aria-hidden />
+      <span className="mx-1 h-5 w-px bg-line2" aria-hidden />
 
       <button
         type="button"
         className={btn}
         onClick={() => void rf.fitView({ padding: 0.22, maxZoom: 1, duration: 250 })}
-        aria-label="Fit to screen"
-        title="Fit to screen"
+        aria-label={t("editor.view.fit")}
+        title={t("editor.view.fit")}
       >
         <ArrowsOut size={15} aria-hidden />
       </button>
@@ -75,8 +77,8 @@ export function CanvasToolbar({
           type="button"
           className={btn}
           onClick={onArrange}
-          aria-label="Arrange nodes"
-          title="Arrange nodes"
+          aria-label={t("editor.view.arrange")}
+          title={t("editor.view.arrange")}
         >
           <TreeStructure size={15} aria-hidden />
         </button>
@@ -85,8 +87,8 @@ export function CanvasToolbar({
         type="button"
         onClick={onToggleMinimap}
         aria-pressed={minimap}
-        aria-label={minimap ? "Hide minimap" : "Show minimap"}
-        title={minimap ? "Hide minimap" : "Show minimap"}
+        aria-label={minimap ? t("editor.view.hideMinimap") : t("editor.view.showMinimap")}
+        title={minimap ? t("editor.view.hideMinimap") : t("editor.view.showMinimap")}
         className={`${btn} ${minimap ? "!bg-ink/10 !text-ink" : ""}`}
       >
         <MapTrifold size={15} aria-hidden />

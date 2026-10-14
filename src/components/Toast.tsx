@@ -48,7 +48,7 @@ export function ToastHost() {
     <div
       role="status"
       aria-live="polite"
-      className="pointer-events-none fixed bottom-4 right-4 z-[90] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2"
+      className="pointer-events-none fixed bottom-4 end-4 z-[90] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2"
     >
       {items.map((t) => (
         <div

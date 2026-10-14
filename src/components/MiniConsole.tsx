@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { CaretDown, CaretUp, Terminal } from "@phosphor-icons/react";
 import { fmtUsd } from "@/lib/format";
+import { useI18n, intlTag } from "@/lib/i18n";
 
 export interface ConsoleLine {
   seq: number;
@@ -27,6 +28,7 @@ export function MiniConsole({
   collapsed?: boolean;
   onToggle?: () => void;
 }) {
+  const { t, locale } = useI18n();
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (collapsed) return;
@@ -42,11 +44,11 @@ export function MiniConsole({
         onClick={onToggle}
         disabled={!onToggle}
         aria-expanded={!collapsed}
-        className="flex h-9 items-center justify-between gap-2 px-3.5 text-left text-[12px] text-muted transition-colors hover:text-ink"
+        className="flex h-9 items-center justify-between gap-2 px-3.5 text-start text-[12px] text-muted transition-colors hover:text-ink"
       >
         <span className="flex items-center gap-2 font-medium">
           <Terminal size={14} weight="bold" aria-hidden />
-          Console
+          {t("editor.console.title")}
         </span>
         <span className="flex items-center gap-2.5">
           {cost !== "—" && (
@@ -67,10 +69,11 @@ export function MiniConsole({
       {!collapsed && (
         <div
           ref={ref}
+          dir="ltr"
           className="max-h-44 min-h-0 flex-1 overflow-auto border-t border-line px-3.5 py-2 font-mono text-[11px]"
         >
           {!lines.length && (
-            <p className="py-1 text-faint">Run events will stream in here.</p>
+            <p dir="auto" className="py-1 text-faint">{t("editor.console.empty")}</p>
           )}
           {lines.map((l) => (
             <div
@@ -84,7 +87,7 @@ export function MiniConsole({
               }`}
             >
               <span className="shrink-0 tabular-nums text-faint">
-                {new Date(l.ts).toLocaleTimeString()}
+                {new Date(l.ts).toLocaleTimeString(intlTag(locale))}
               </span>
               <span className="shrink-0">{l.type}</span>
               <span className="min-w-0 truncate">

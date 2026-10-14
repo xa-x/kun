@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { shareExpiry, workspaceSettings } from "@/lib/workspace-settings";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { graphs, shares } from "@/db/schema";
@@ -43,6 +44,13 @@ export async function POST(
     if (!canEdit(actor.membership.role)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+    const settings = workspaceSettings(actor.org.settings);
+    if (!settings.allowPublicShares) {
+      return NextResponse.json(
+        { error: "Sharing links is turned off for this workspace. An admin can allow it in Settings, under Privacy." },
+        { status: 403 },
+      );
+    }
     const { id } = await params;
     const [g] = await db.select().from(graphs).where(eq(graphs.id, id)).limit(1);
     if (!g || g.orgId !== actor.org.id) {
@@ -60,10 +68,11 @@ export async function POST(
         graphId: id,
         token,
         permission,
+        expiresAt: shareExpiry(settings),
       })
       .returning();
     return NextResponse.json(
-      { id: row.id, permission, token, url: `/s/${token}` },
+      { id: row.id, permission, token, url: `/s/${token}`, expiresAt: row.expiresAt },
       { status: 201 },
     );
   } catch (e) {

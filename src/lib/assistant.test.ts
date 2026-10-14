@@ -14,17 +14,24 @@ describe("matchPorts", () => {
     });
   });
 
-  it("wires skill text into an AI Image prompt port", () => {
-    expect(matchPorts("skill", "image.gen")).toEqual({
+  it("wires a File into the media input, not the text prompt", () => {
+    expect(matchPorts("file.in", "video.gen")).toEqual({
+      sourceHandle: "out",
+      targetHandle: "image",
+    });
+  });
+
+  it("wires text into an AI Image prompt port", () => {
+    expect(matchPorts("text", "image.gen")).toEqual({
       sourceHandle: "out",
       targetHandle: "prompt",
     });
   });
 
-  it("wires video → media out video port", () => {
-    expect(matchPorts("video.gen", "out.media")).toEqual({
+  it("wires video → the Output's one input", () => {
+    expect(matchPorts("video.gen", "out.text")).toEqual({
       sourceHandle: "out",
-      targetHandle: "video",
+      targetHandle: "in",
     });
   });
 
@@ -41,26 +48,21 @@ describe("applyGraphOps", () => {
     const next = applyGraphOps(empty, [
       { op: "add_node", id: "img", kind: "image.in", label: "Image" },
       { op: "add_node", id: "vid", kind: "video.gen", label: "AI Video" },
+    ]);
+    // a retired upload kind the model still asks for lands on File
+    expect(next.nodes.map((n) => n.data.kind)).toEqual(["file.in", "video.gen"]);
+    expect(next.edges).toEqual([
+      expect.objectContaining({ sourceHandle: "out", targetHandle: "image" }),
+    ]);
+  });
+
+  it("does not add an Output node: every node shows its own result", () => {
+    const next = applyGraphOps(empty, [
+      { op: "add_node", id: "ai", kind: "llm" },
       { op: "add_node", id: "out", kind: "out.media", label: "Media Out" },
+      { op: "add_node", id: "out2", kind: "out.text" },
     ]);
-    expect(next.nodes.map((n) => n.data.kind)).toEqual([
-      "image.in",
-      "video.gen",
-      "out.media",
-    ]);
-    expect(next.edges).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          sourceHandle: "out",
-          targetHandle: "image",
-        }),
-        expect.objectContaining({
-          sourceHandle: "out",
-          targetHandle: "video",
-        }),
-      ]),
-    );
-    expect(next.edges).toHaveLength(2);
+    expect(next.nodes.map((n) => n.data.kind)).toEqual(["llm"]);
   });
 
   it("connects with wrong handles by remapping types", () => {
@@ -95,15 +97,15 @@ describe("autoWireNodes", () => {
 describe("layoutGraph", () => {
   it("places sources left of their targets", () => {
     const doc = applyGraphOps(empty, [
-      { op: "add_node", id: "img", kind: "image.in" },
+      { op: "add_node", id: "img", kind: "file.in" },
+      { op: "add_node", id: "gen", kind: "image.gen" },
       { op: "add_node", id: "vid", kind: "video.gen" },
-      { op: "add_node", id: "out", kind: "out.media" },
     ]);
     const laid = layoutGraph(doc);
     const x = Object.fromEntries(
       laid.nodes.map((n) => [n.data.kind, n.position.x]),
     );
-    expect(x["image.in"]).toBeLessThan(x["video.gen"]);
-    expect(x["video.gen"]).toBeLessThan(x["out.media"]);
+    expect(x["file.in"]).toBeLessThan(x["image.gen"]);
+    expect(x["image.gen"]).toBeLessThan(x["video.gen"]);
   });
 });

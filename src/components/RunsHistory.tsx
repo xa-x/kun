@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { CaretDown, Lightning } from "@phosphor-icons/react";
-import { ago, fmtCost, fmtDur } from "@/lib/format";
+import { fmtCost } from "@/lib/format";
+import { useI18n } from "@/lib/i18n";
+import type { MessageKey } from "@/lib/i18n/messages";
 import { toast } from "./Toast";
 import { readJson } from "@/lib/http";
 import { APP_HOME } from "@/lib/routes";
@@ -41,22 +43,23 @@ interface BookOpt {
   title: string;
 }
 
-const TRIGGER_LABEL: Record<string, string> = {
-  node: "Single node",
-  manual: "Full run",
-  api: "API",
-  cron: "Schedule",
-  webhook: "Webhook",
+const TRIGGER_LABEL: Record<string, MessageKey> = {
+  node: "shell.runs.trigger.node",
+  manual: "shell.runs.trigger.manual",
+  api: "shell.runs.trigger.api",
+  cron: "shell.runs.trigger.cron",
+  webhook: "shell.runs.trigger.webhook",
 };
 
 function RunStatus({ status }: { status: string }) {
+  const { t } = useI18n();
   const map: Record<string, { label: string; cls: string }> = {
-    done: { label: "Done", cls: "bg-ok/12 text-ok" },
-    error: { label: "Failed", cls: "bg-err/12 text-err" },
-    timed_out: { label: "Timed out", cls: "bg-err/12 text-err" },
-    cancelled: { label: "Cancelled", cls: "bg-ink/8 text-muted" },
-    running: { label: "Running", cls: "bg-live/12 text-live" },
-    queued: { label: "Queued", cls: "bg-live/12 text-live" },
+    done: { label: t("shell.runs.status.done"), cls: "bg-ok/12 text-ok" },
+    error: { label: t("shell.runs.status.error"), cls: "bg-err/12 text-err" },
+    timed_out: { label: t("shell.runs.status.timedOut"), cls: "bg-err/12 text-err" },
+    cancelled: { label: t("shell.runs.status.cancelled"), cls: "bg-ink/8 text-muted" },
+    running: { label: t("shell.runs.status.running"), cls: "bg-live/12 text-live" },
+    queued: { label: t("shell.runs.status.queued"), cls: "bg-live/12 text-live" },
   };
   const s = map[status] ?? { label: status, cls: "bg-ink/8 text-muted" };
   return (
@@ -69,6 +72,7 @@ function RunStatus({ status }: { status: string }) {
 }
 
 export function RunsHistory() {
+  const { t, tn, num, ago, dur } = useI18n();
   const params = useSearchParams();
   const initial = params.get("graphId") ?? "";
   const [filter, setFilter] = useState(initial);
@@ -93,17 +97,17 @@ export function RunsHistory() {
         : "?limit=50";
       const res = await fetch(`/api/runs${q}`);
       const j = await readJson<{ runs?: RunRow[]; error?: string }>(res);
-      if (!res.ok) throw new Error(j.error || "Failed to load runs");
+      if (!res.ok) throw new Error(j.error || t("shell.runs.loadFailed"));
       setRuns(Array.isArray(j?.runs) ? j.runs : []);
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Couldn’t load runs.", "error");
+      toast(e instanceof Error ? e.message : t("shell.runs.loadFailed"), "error");
       setRuns([]);
     }
-  }, [filter]);
+  }, [filter, t]);
 
   useEffect(() => {
-    const t = setTimeout(() => load(), 0);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => load(), 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   const expand = async (runId: string) => {
@@ -127,26 +131,26 @@ export function RunsHistory() {
 
   const labelFor = useMemo(() => {
     const m = new Map(books.map((b) => [b.id, b.title]));
-    return (r: RunRow) => r.graphTitle || m.get(r.graphId) || "Untitled";
-  }, [books]);
+    return (r: RunRow) => r.graphTitle || m.get(r.graphId) || t("common.untitled");
+  }, [books, t]);
 
   return (
     <div className="mx-auto w-full max-w-5xl px-5 py-10 md:px-10 md:py-12">
       <PageHeader
-        title="Runs"
-        description="Cost, tokens and duration for every execution, whether you pressed Run or a schedule did."
+        title={t("shell.nav.runs")}
+        description={t("shell.runs.description")}
         actions={
           <label className="flex items-center gap-3">
-            <span className="text-[13px] text-muted">Workbook</span>
+            <span className="text-[13px] text-muted">{t("common.project")}</span>
             <select
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               className="kun-input !h-10 !w-auto min-w-48 !rounded-full !py-0"
             >
-              <option value="">All workbooks</option>
+              <option value="">{t("shell.runs.allProjects")}</option>
               {books.map((b) => (
                 <option key={b.id} value={b.id}>
-                  {b.title || "Untitled"}
+                  {b.title || t("common.untitled")}
                 </option>
               ))}
             </select>
@@ -167,16 +171,15 @@ export function RunsHistory() {
           <span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-ink/8 text-ink">
             <Lightning size={20} weight="bold" aria-hidden />
           </span>
-          <p className="mt-4 text-[16px] font-medium text-ink">No runs yet</p>
+          <p className="mt-4 text-[16px] font-medium text-ink">{t("shell.runs.emptyTitle")}</p>
           <p className="mx-auto mt-1 max-w-sm text-[13.5px] leading-relaxed text-muted">
-            Run a workbook from the canvas and its history, with a per-node cost
-            breakdown, will collect here.
+            {t("shell.runs.emptyBody")}
           </p>
           <Link
             href={APP_HOME}
             className="kun-btn-secondary mt-6 inline-flex h-10 items-center rounded-full px-5 text-[13px] font-medium"
           >
-            Open a workbook
+            {t("shell.runs.openProject")}
           </Link>
         </div>
       )}
@@ -191,18 +194,18 @@ export function RunsHistory() {
                   type="button"
                   onClick={() => expand(r.id)}
                   aria-expanded={expanded}
-                  className="flex w-full items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-ink/[0.03]"
+                  className="flex w-full items-center gap-4 px-5 py-4 text-start transition-colors hover:bg-ink/[0.03]"
                 >
                   <RunStatus status={r.status} />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-[14px] font-medium text-ink">
+                    <div dir="auto" className="truncate text-[14px] font-medium text-ink">
                       {labelFor(r)}
                     </div>
                     <div className="mt-0.5 flex flex-wrap gap-x-3 text-[12.5px] text-muted">
-                      <span>{TRIGGER_LABEL[r.trigger] ?? r.trigger}</span>
-                      <span>{r.totalTokens.toLocaleString()} tokens</span>
+                      <span>{TRIGGER_LABEL[r.trigger] ? t(TRIGGER_LABEL[r.trigger]) : r.trigger}</span>
+                      <span>{tn("shell.runs.tokens", r.totalTokens)}</span>
                       <span>{fmtCost(r.totalCostUsd)}</span>
-                      <span>{fmtDur(r.durationMs)}</span>
+                      <span>{dur(r.durationMs)}</span>
                     </div>
                   </div>
                   <span className="hidden shrink-0 text-[12.5px] text-faint sm:block">
@@ -230,31 +233,31 @@ export function RunsHistory() {
                         href={`/w/${r.graphId}`}
                         className="shrink-0 text-[13px] font-medium text-ink underline-offset-4 hover:underline"
                       >
-                        Open workbook
+                        {t("shell.runs.openProject")}
                       </Link>
                     </div>
                     {nodeState[r.id] === "err" ? (
                       <p className="text-[13px] text-err">
-                        Couldn’t load the node breakdown.
+                        {t("shell.runs.nodesFailed")}
                       </p>
                     ) : !(nodes[r.id] ?? []).length && nodeState[r.id] !== "ok" ? (
-                      <p className="text-[13px] text-faint">Loading…</p>
+                      <p className="text-[13px] text-faint">{t("common.loading")}</p>
                     ) : (nodes[r.id] ?? []).length ? (
                       <div className="overflow-x-auto">
                         <table className="w-full min-w-[480px] text-[12.5px] text-muted">
                           <thead>
-                            <tr className="text-left text-faint">
-                              <th scope="col" className="pb-2 font-medium">
-                                Node
+                            <tr className="text-start text-faint">
+                              <th scope="col" className="pb-2 text-start font-medium">
+                                {t("shell.runs.node")}
                               </th>
-                              <th scope="col" className="pb-2 text-right font-medium">
-                                Tokens
+                              <th scope="col" className="pb-2 text-end font-medium">
+                                {t("shell.runs.tokensCol")}
                               </th>
-                              <th scope="col" className="pb-2 text-right font-medium">
-                                Cost
+                              <th scope="col" className="pb-2 text-end font-medium">
+                                {t("shell.runs.cost")}
                               </th>
-                              <th scope="col" className="pb-2 text-right font-medium">
-                                Time
+                              <th scope="col" className="pb-2 text-end font-medium">
+                                {t("shell.runs.time")}
                               </th>
                             </tr>
                           </thead>
@@ -271,26 +274,27 @@ export function RunsHistory() {
                                 }
                               >
                                 <td
-                                  className="max-w-64 truncate py-1"
+                                  dir="ltr"
+                                  className="max-w-64 truncate py-1 text-start"
                                   title={n.model ?? ""}
                                 >
                                   {n.nodeId}
                                   {n.model ? ` (${n.model})` : ""}
                                 </td>
-                                <td className="text-right">
+                                <td className="text-end">
                                   {n.tokensIn + n.tokensOut > 0
-                                    ? (n.tokensIn + n.tokensOut).toLocaleString()
+                                    ? num(n.tokensIn + n.tokensOut)
                                     : "—"}
                                 </td>
-                                <td className="text-right">{fmtCost(n.costUsd)}</td>
-                                <td className="text-right">{fmtDur(n.durationMs)}</td>
+                                <td className="text-end">{fmtCost(n.costUsd)}</td>
+                                <td className="text-end">{dur(n.durationMs)}</td>
                               </tr>
                             ))}
                           </tbody>
                         </table>
                       </div>
                     ) : (
-                      <p className="text-[13px] text-faint">No node rows.</p>
+                      <p className="text-[13px] text-faint">{t("shell.runs.noNodes")}</p>
                     )}
                   </div>
                 )}

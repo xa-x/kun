@@ -4,22 +4,25 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Handle,
   Position,
-  useEdges,
-  useNodes,
   useStore,
   type NodeProps,
 } from "@xyflow/react";
 import {
-  ArrowSquareOut,
+  ArrowLineDown,
   Check,
   Copy,
   DownloadSimple,
   Play,
+  PushPin,
+  Snowflake,
   Trash,
+  Images,
   UploadSimple,
   X,
 } from "@phosphor-icons/react";
 import { nodeDef, type NodeTypeDef } from "@/lib/nodes";
+import { useI18n } from "@/lib/i18n";
+import { portLabel } from "@/lib/i18n/nodes";
 import {
   CUSTOM_MODEL,
   filterModels,
@@ -27,6 +30,7 @@ import {
   kindForNode,
   liveList,
   modelName,
+  suggestionsFor,
   type ModelInfo,
 } from "@/lib/models";
 import {
@@ -37,7 +41,7 @@ import {
   type RecentModel,
 } from "@/lib/recent-models";
 import { useCatalog } from "@/lib/model-catalog";
-import { describeOutputs } from "@/lib/render";
+import { parseTextOutput } from "@/lib/render";
 import {
   CUSTOM_PARAM,
   IMAGE_ASPECTS,
@@ -49,13 +53,27 @@ import {
   voiceChoices,
 } from "@/lib/media-params";
 import type { FlowNodeData, NodeOutput } from "@/lib/types";
-import { OutputRenderer, downloadOutputs } from "./OutputRenderer";
+import { MediaEmbed, OutputRenderer, downloadOutputs } from "./OutputRenderer";
 import { SkillPicker } from "./SkillPicker";
 import { toast } from "./Toast";
 import { readJson } from "@/lib/http";
 import { fmtUsd } from "@/lib/format";
+import { useEstimate, useFormatEstimate } from "@/lib/use-estimates";
+import { aspectNumber } from "@/lib/media-params";
 import { NodeFrame, handleStyle, type PortPlacement } from "./node/NodeFrame";
-import { PORT_NAME } from "./node/tokens";
+import { PORT_TYPE_KEY } from "./node/tokens";
+import { CommentNode, GroupNode } from "./node/NoteNodes";
+import { MediaCard } from "./node/MediaCard";
+import { NodeBadges } from "./node/NodeBadges";
+import { PortAdd } from "./node/PortAdd";
+import { AssetPicker } from "./assets/AssetPicker";
+import type { AssetKind } from "@/lib/assets";
+
+/** "47s", "4m 42s": how long a node ran. */
+function fmtDuration(ms: number) {
+  const s = Math.round(ms / 1000);
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+}
 
 const patch = (nodeId: string, p: Record<string, unknown>) =>
   window.dispatchEvent(
@@ -65,41 +83,25 @@ const patch = (nodeId: string, p: Record<string, unknown>) =>
 const emit = (name: string, nodeId: string) =>
   window.dispatchEvent(new CustomEvent(name, { detail: { nodeId } }));
 
-async function saveSkillToLibrary(nodeId: string, d: FlowNodeData) {
-  if (!d.text?.trim() && !d.label?.trim()) {
-    toast("Write some instructions first.", "error");
-    return;
-  }
-  try {
-    const res = await fetch("/api/skills", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        displayName: d.label !== "Skill" ? d.label : undefined,
-        name: d.label !== "Skill" ? d.label : undefined,
-        body: d.text ?? "",
-      }),
-    });
-    const j = await readJson<{
-      skill?: { slug: string; displayName: string; instructions?: string; body?: string };
-      error?: string;
-    }>(res);
-    if (!res.ok || !j.skill) throw new Error(j.error || "Save failed");
-    patch(nodeId, {
-      skillId: j.skill.slug,
-      label: j.skill.displayName,
-      text: j.skill.instructions ?? j.skill.body ?? d.text,
-    });
-    toast(`Saved “${j.skill.displayName}”. It now appears in every skill picker.`, "ok");
-  } catch (e) {
-    toast(e instanceof Error ? e.message : "Save failed", "error");
-  }
+/**
+ * Every canvas node is a "flow" node. Comments and group frames are notes with
+ * their own light cards; everything else is a standard node card.
+ */
+export function FlowNode(props: NodeProps) {
+  const kind = (props.data as FlowNodeData).kind;
+  if (kind === "comment") return <CommentNode {...props} />;
+  if (kind === "group") return <GroupNode {...props} />;
+  return <StandardNode {...props} />;
 }
 
-export function FlowNode({ id, data, selected }: NodeProps) {
+function StandardNode({ id, data, selected }: NodeProps) {
+  const { t, tn } = useI18n();
+  const fmtEstimate = useFormatEstimate();
   const d = data as FlowNodeData;
   const def = nodeDef(d.kind);
   const [upl, setUpl] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [more, setMore] = useState(false);
   const [copied, setCopied] = useState(false);
   const cat = useCatalog();
 
@@ -138,16 +140,24 @@ export function FlowNode({ id, data, selected }: NodeProps) {
   const need = kindForNode(d.kind) ?? "chat";
   const live = liveList(cat.models, cat.errors);
 
+  const shortlist = suggestionsFor(cat, kindForNode(d.kind), def?.models);
   const defaultModel =
-    recents.length || def?.models?.length
+    recents.length || shortlist.length
       ? pickRecentDefault(
           recents,
-          def?.models ?? [],
+          shortlist,
           cat.models,
           cat.errors,
           need,
         ).model
       : "";
+
+  // What this model usually costs and how long it takes, shown before a run.
+  const estimate = useEstimate(
+    ["llm", "image.gen", "tts", "video.gen"].includes(d.kind)
+      ? (d.model ?? defaultModel)
+      : undefined,
+  );
 
   useEffect(() => {
     if (d.kind !== "tts" || !d.voice) return;
@@ -160,11 +170,18 @@ export function FlowNode({ id, data, selected }: NodeProps) {
 
   if (!def) return null;
 
-  const isMediaIn = ["image.in", "audio.in", "video.in"].includes(d.kind);
+  const isMediaIn = ["file.in", "image.in", "audio.in", "video.in"].includes(d.kind);
+  const mediaKind =
+    d.kind === "file.in" ? (d.mediaType ?? "image") : d.kind.replace(".in", "");
   const isSink = d.kind.startsWith("out.");
   const isAi = ["llm", "image.gen", "tts", "video.gen"].includes(d.kind);
+  const isVisualAi = d.kind === "image.gen" || d.kind === "video.gen";
   const status = d.runStatus ?? "idle";
   const outputs = d.outputs ?? [];
+  // The shape asked for: the chosen aspect (or exact size / resolution).
+  const frameRatio = isVisualAi
+    ? (aspectNumber(d.aspectRatio) ?? aspectNumber(d.size) ?? aspectNumber(d.resolution))
+    : undefined;
   // live-streamed text (LLM nodes), shown while running
   const streaming = d.streamingText ?? "";
   const hasContent =
@@ -175,7 +192,39 @@ export function FlowNode({ id, data, selected }: NodeProps) {
     outputs.map((o) => (o.type === "text" ? o.text.length : o.url)),
   );
 
+  // A short caption for what an Output node received, in the active language.
+  const describeOutputs = (outs: NodeOutput[]): string => {
+    const texts = outs.filter(
+      (o): o is Extract<NodeOutput, { type: "text" }> => o.type === "text",
+    );
+    const mediaCount = outs.length - texts.length;
+    const parts: string[] = [];
+    if (texts.length === 1) {
+      const kinds = new Set(parseTextOutput(texts[0].text ?? "").map((b) => b.kind));
+      const name = kinds.has("html")
+        ? t("canvas.out.page")
+        : kinds.has("json")
+          ? t("canvas.out.json")
+          : kinds.has("code")
+            ? t("canvas.out.code")
+            : kinds.has("image") || kinds.has("audio") || kinds.has("video")
+              ? t("canvas.out.embed")
+              : t("common.text");
+      parts.push(`${name} · ${tn("canvas.result.chars", (texts[0].text ?? "").length)}`);
+    } else if (texts.length > 1) parts.push(tn("canvas.out.texts", texts.length));
+    if (mediaCount) parts.push(tn("canvas.out.mediaCount", mediaCount));
+    return parts.join(" + ") || t("canvas.out.empty");
+  };
+
   const upload = async (file: File) => {
+    // A File node takes any media; remember which kind so the right port fires.
+    const mediaType = (["image", "audio", "video"] as const).find((k) =>
+      file.type.startsWith(`${k}/`),
+    );
+    if (d.kind === "file.in" && !mediaType) {
+      toast(t("canvas.node.chooseMedia"), "error");
+      return;
+    }
     setUpl(true);
     try {
       const fd = new FormData();
@@ -185,34 +234,34 @@ export function FlowNode({ id, data, selected }: NodeProps) {
         () => ({} as { id?: string; error?: string }),
       );
       if (!res.ok || !j.id) {
-        const msg = typeof j.error === "string" ? j.error : "Upload failed";
+        const msg = typeof j.error === "string" ? j.error : t("canvas.node.uploadFailed");
         toast(msg, "error");
         patch(id, { runStatus: "error", runError: msg });
         return;
       }
       window.dispatchEvent(
         new CustomEvent("kun:set-artifact", {
-          detail: { nodeId: id, artifactId: j.id },
+          detail: { nodeId: id, artifactId: j.id, mediaType },
         }),
       );
       patch(id, { runStatus: undefined, runError: undefined });
     } catch {
-      toast("Upload failed", "error");
-      patch(id, { runStatus: "error", runError: "Upload failed" });
+      toast(t("canvas.node.uploadFailed"), "error");
+      patch(id, { runStatus: "error", runError: t("canvas.node.uploadFailed") });
     } finally {
       setUpl(false);
     }
   };
 
-  const copy = async (t: string) => {
+  const copy = async (str: string) => {
     let ok = false;
     try {
-      await navigator.clipboard.writeText(t);
+      await navigator.clipboard.writeText(str);
       ok = true;
     } catch {
       // fallback for contexts where the async clipboard API is blocked
       const ta = document.createElement("textarea");
-      ta.value = t;
+      ta.value = str;
       ta.style.position = "fixed";
       ta.style.opacity = "0";
       document.body.appendChild(ta);
@@ -231,7 +280,7 @@ export function FlowNode({ id, data, selected }: NodeProps) {
   };
 
   const toolbar = (
-    <div className="kun-node__toolbar nodrag" role="toolbar" aria-label="Node actions">
+    <div className="kun-node__toolbar nodrag" role="toolbar" aria-label={t("canvas.toolbar.label")}>
       {status !== "running" && (
         <button
           type="button"
@@ -241,11 +290,69 @@ export function FlowNode({ id, data, selected }: NodeProps) {
           }}
           className="kun-node__tool"
           data-tone="run"
-          title="Run this node (or double-click it)"
+          title={t("canvas.toolbar.runTip")}
         >
           <Play size={11} weight="fill" aria-hidden />
-          Run
+          {t("common.run")}
         </button>
+      )}
+      {status !== "running" && connected.out.size > 0 && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            window.dispatchEvent(
+              new CustomEvent("kun:run-node", {
+                detail: { nodeId: id, mode: "from" },
+              }),
+            );
+          }}
+          className="kun-node__tool"
+          title={t("canvas.toolbar.runFrom")}
+          aria-label={t("canvas.toolbar.runFrom")}
+        >
+          <ArrowLineDown size={13} weight="bold" aria-hidden />
+        </button>
+      )}
+      {isAi && (
+        <>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              patch(id, { frozen: !d.frozen });
+            }}
+            className="kun-node__tool"
+            data-on={d.frozen ? "true" : undefined}
+            aria-pressed={!!d.frozen}
+            title={
+              d.frozen
+                ? t("canvas.toolbar.frozenTip")
+                : t("canvas.toolbar.freezeTip")
+            }
+            aria-label={d.frozen ? t("canvas.toolbar.unfreeze") : t("canvas.toolbar.freeze")}
+          >
+            <Snowflake size={13} weight="bold" aria-hidden />
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              patch(id, { pinned: !d.pinned });
+            }}
+            className="kun-node__tool"
+            data-on={d.pinned ? "pin" : undefined}
+            aria-pressed={!!d.pinned}
+            title={
+              d.pinned
+                ? t("canvas.toolbar.pinnedTip")
+                : t("canvas.toolbar.pinTip")
+            }
+            aria-label={d.pinned ? t("canvas.toolbar.unpin") : t("canvas.toolbar.pin")}
+          >
+            <PushPin size={13} weight={d.pinned ? "fill" : "bold"} aria-hidden />
+          </button>
+        </>
       )}
       {status !== "running" && (
         <>
@@ -256,8 +363,8 @@ export function FlowNode({ id, data, selected }: NodeProps) {
               emit("kun:duplicate-node", id);
             }}
             className="kun-node__tool"
-            title="Duplicate node"
-            aria-label="Duplicate node"
+            title={t("canvas.toolbar.duplicate")}
+            aria-label={t("canvas.toolbar.duplicate")}
           >
             <Copy size={13} weight="bold" aria-hidden />
           </button>
@@ -269,8 +376,8 @@ export function FlowNode({ id, data, selected }: NodeProps) {
             }}
             className="kun-node__tool"
             data-tone="danger"
-            title="Delete node"
-            aria-label="Delete node"
+            title={t("canvas.toolbar.delete")}
+            aria-label={t("canvas.toolbar.delete")}
           >
             <Trash size={13} weight="bold" aria-hidden />
           </button>
@@ -280,15 +387,156 @@ export function FlowNode({ id, data, selected }: NodeProps) {
   );
 
   const renderHandle = (p: PortPlacement) => (
-    <Handle
-      key={`${p.side}-${p.port.id}`}
-      id={p.port.id}
-      type={p.side === "in" ? "target" : "source"}
-      position={p.side === "in" ? Position.Left : Position.Right}
-      style={handleStyle(p)}
-      title={`${p.port.label} (${PORT_NAME[p.port.type]})`}
-    />
+    <span key={`${p.side}-${p.port.id}`}>
+      <Handle
+        id={p.port.id}
+        type={p.side === "in" ? "target" : "source"}
+        position={p.side === "in" ? Position.Left : Position.Right}
+        style={handleStyle(p)}
+        title={t("canvas.portTip", { label: portLabel(t, p.port.label), type: t(PORT_TYPE_KEY[p.port.type]) })}
+      />
+      {!p.connected && (
+        <PortAdd nodeId={id} port={p.port} side={p.side} top={p.top} />
+      )}
+    </span>
   );
+
+  // Model and the settings that shape the result. Rarely used ones sit behind
+  // "+". A skill or standing instruction is an Instruction node wired into the
+  // prompt port, never a setting here.
+  const controls =
+    def.models && def.models.length > 0 ? (
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              <ModelPicker
+                id={id}
+                d={d}
+                def={def}
+                defaultModel={defaultModel}
+                recents={recents}
+                live={live}
+              />
+
+              {d.kind === "image.gen" && (
+                <AspectParam
+                  value={d.aspectRatio}
+                  options={IMAGE_ASPECTS}
+                  onChange={(aspectRatio) =>
+                    patch(id, { aspectRatio, size: undefined })
+                  }
+                />
+              )}
+
+              {d.kind === "video.gen" && (
+                <>
+                  <AspectParam
+                    value={d.aspectRatio}
+                    options={VIDEO_ASPECTS}
+                    onChange={(aspectRatio) => patch(id, { aspectRatio })}
+                  />
+                  <OptionalParam
+                    value={d.duration != null ? String(d.duration) : undefined}
+                    onChange={(raw) =>
+                      patch(id, {
+                        duration: raw ? Number(raw) || undefined : undefined,
+                      })
+                    }
+                    options={VIDEO_DURATIONS}
+                    autoLabel={t("canvas.param.length")}
+                    customPlaceholder={t("canvas.param.seconds")}
+                  />
+                </>
+              )}
+
+              {d.kind === "tts" && (
+                <OptionalParam
+                  value={d.voice}
+                  onChange={(voice) => patch(id, { voice })}
+                  options={voiceChoices(
+                    d.model ?? defaultModel,
+                    voicesForModel(cat.models, d.model ?? defaultModel),
+                  )}
+                  autoLabel={t("canvas.param.voice")}
+                  customPlaceholder={t("canvas.param.voicePh")}
+                />
+              )}
+
+              {(d.kind === "image.gen" || d.kind === "video.gen") &&
+                (more || d.size || d.resolution ? (
+                  d.kind === "image.gen" ? (
+                    <OptionalParam
+                      value={d.size}
+                      onChange={(size) =>
+                        patch(id, { size, aspectRatio: size ? undefined : d.aspectRatio })
+                      }
+                      options={IMAGE_SIZES}
+                      autoLabel={t("canvas.param.size")}
+                      customPlaceholder="1024x1024"
+                    />
+                  ) : (
+                    <OptionalParam
+                      value={d.resolution}
+                      onChange={(resolution) => patch(id, { resolution })}
+                      options={VIDEO_RESOLUTIONS}
+                      autoLabel={t("canvas.param.resolution")}
+                      customPlaceholder="1920x1080"
+                    />
+                  )
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setMore(true)}
+                    title={d.kind === "image.gen" ? t("canvas.param.moreSize") : t("canvas.param.moreResolution")}
+                    aria-label={t("canvas.param.more")}
+                    className="nodrag kun-chip-select !px-2 leading-none"
+                  >
+                    +
+                  </button>
+                ))}
+            </div>
+    ) : null;
+
+  if (d.kind === "image.gen" || d.kind === "video.gen" || d.kind === "tts") {
+    const effModel = d.model ?? defaultModel;
+    const listed = (live ?? []).find((m) => m.id === effModel);
+    const modelLabel = listed ? modelName(listed) : (effModel.split("/").pop() ?? t("canvas.model.pick"));
+    const summary = [
+      d.kind === "tts" ? d.voice : (d.aspectRatio ?? d.size),
+      d.kind === "video.gen" && d.duration ? `${d.duration}s` : null,
+      d.kind === "video.gen" ? d.resolution : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    return (
+      <MediaCard
+        nodeId={id}
+        kind={d.kind}
+        status={status}
+        selected={selected}
+        connected={connected}
+        ports={{ in: def.inputs, out: def.outputs }}
+        result={outputs}
+        requestedRatio={frameRatio}
+        modelLabel={modelLabel}
+        summary={summary}
+        controls={controls}
+        error={d.runError}
+        startedAt={d.runStartedAt}
+        cost={
+          d.runUsage?.costUsd
+            ? d.runDurationMs
+              ? `${fmtUsd(d.runUsage.costUsd)} · ${fmtDuration(d.runDurationMs)}`
+              : fmtUsd(d.runUsage.costUsd)
+            : null
+        }
+        estimate={estimate ? fmtEstimate(estimate) : null}
+        toolbar={toolbar}
+        seed={id}
+        frozen={!!d.frozen}
+        pinned={!!d.pinned}
+      />
+    );
+  }
 
   return (
     <NodeFrame
@@ -297,201 +545,93 @@ export function FlowNode({ id, data, selected }: NodeProps) {
       status={status}
       selected={selected}
       wide={isSink}
-      cost={d.runUsage?.costUsd ? fmtUsd(d.runUsage.costUsd) : null}
+      cost={
+        d.runUsage?.costUsd
+          ? d.runDurationMs
+            ? `${fmtUsd(d.runUsage.costUsd)} · ${fmtDuration(d.runDurationMs)}`
+            : fmtUsd(d.runUsage.costUsd)
+          : null
+      }
+      estimate={estimate ? fmtEstimate(estimate) : null}
+      startedAt={d.runStartedAt}
+      frozen={!!d.frozen}
+      badges={<NodeBadges frozen={d.frozen} pinned={d.pinned} />}
       connected={connected}
       renderHandle={renderHandle}
       toolbar={toolbar}
     >
       <div className="space-y-2">
         {/* source editors */}
+        {(d.kind === "note" || (d.kind === "text" && d.skillId)) && (
+          <SkillPicker
+            compact
+            value={d.skillId}
+            draft={{ displayName: d.label, body: d.text }}
+            onPick={(skill) =>
+              patch(
+                id,
+                skill
+                  ? {
+                      skillId: skill.slug,
+                      label: skill.displayName,
+                      text: skill.instructions ?? skill.body ?? "",
+                    }
+                  : { skillId: undefined },
+              )
+            }
+          />
+        )}
+
         {(d.kind === "text" || d.kind === "note") && (
           <textarea
             value={d.text ?? ""}
             onChange={(e) => patch(id, { text: e.target.value })}
-            aria-label={d.kind === "note" ? "Instruction" : "Text"}
+            aria-label={d.kind === "note" ? t("canvas.node.note.label") : t("canvas.node.text.label")}
             placeholder={
-              d.kind === "note" ? "Instruction…" : "Paste text or an article…"
+              d.kind === "note" ? t("canvas.node.instructionPh") : t("canvas.node.textPh")
             }
+            dir="auto"
             rows={d.kind === "note" ? 2 : 5}
             className="kun-field nodrag nowheel resize-y"
           />
         )}
 
-        {d.kind === "skill" && (
-          <>
-            <SkillPicker
-              value={d.skillId}
-              draft={{ displayName: d.label, body: d.text }}
-              onPick={(s) =>
-                patch(id, {
-                  skillId: s?.slug,
-                  label: s?.displayName ?? "Skill",
-                  text: s?.instructions ?? s?.body ?? "",
-                })
-              }
-            />
-            <textarea
-              value={d.text ?? ""}
-              onChange={(e) => patch(id, { text: e.target.value })}
-              aria-label="Skill instructions"
-              placeholder="Skill instructions appear here. Edit them before wiring into an AI node."
-              rows={5}
-              className="kun-field nodrag nowheel resize-y"
-            />
-            <div className="flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                onClick={() => void saveSkillToLibrary(id, d)}
-                className="nodrag kun-chip-select"
-              >
-                Save to library
-              </button>
-              <button
-                type="button"
-                onClick={() => emit("kun:expand-skill", id)}
-                className="nodrag kun-chip-select"
-              >
-                Expand to image
-              </button>
-            </div>
-          </>
-        )}
-
-        {d.kind === "tts" ? (
-          <TtsPrompt id={id} value={d.prompt ?? ""} />
-        ) : (
-          (d.kind === "llm" ||
-            d.kind === "image.gen" ||
-            d.kind === "video.gen") && (
-            <textarea
-              value={d.prompt ?? ""}
-              onChange={(e) => patch(id, { prompt: e.target.value })}
-              aria-label="Prompt"
-              placeholder={
-                d.kind === "llm"
-                  ? "What should the model do with the input…"
-                  : d.kind === "image.gen"
-                    ? "Describe the image, or how to edit the reference…"
-                    : "Describe what to generate…"
-              }
-              rows={3}
-              className="kun-field nodrag nowheel resize-y"
-            />
-          )
-        )}
-
-        {isAi && (
-          <SkillPicker
-            compact
-            value={d.skillId}
-            onPick={(s) => patch(id, { skillId: s?.slug })}
+        {d.kind === "llm" && (
+          <textarea
+            value={d.prompt ?? ""}
+            onChange={(e) => patch(id, { prompt: e.target.value })}
+            aria-label={t("canvas.port.prompt")}
+            placeholder={t("canvas.node.llmPh")}
+            dir="auto"
+            rows={3}
+            className="kun-field nodrag nowheel resize-y"
           />
         )}
 
-        {def.models && def.models.length > 0 && (
-          <ModelPicker
-            id={id}
-            d={d}
-            def={def}
-            defaultModel={defaultModel}
-            recents={recents}
-            live={live}
-          />
-        )}
-
-        {d.kind === "image.gen" && (
-          <div className="flex flex-wrap gap-1.5">
-            <OptionalParam
-              value={d.aspectRatio}
-              onChange={(aspectRatio) =>
-                patch(id, {
-                  aspectRatio,
-                  size: aspectRatio ? undefined : d.size,
-                })
-              }
-              options={IMAGE_ASPECTS}
-              autoLabel="Aspect: Auto"
-              customPlaceholder="W:H, e.g. 16:9"
-            />
-            <OptionalParam
-              value={d.size}
-              onChange={(size) =>
-                patch(id, {
-                  size,
-                  aspectRatio: size ? undefined : d.aspectRatio,
-                })
-              }
-              options={IMAGE_SIZES}
-              autoLabel="Size: Auto"
-              customPlaceholder="1024x1024"
-            />
-          </div>
-        )}
-
-        {d.kind === "video.gen" && (
-          <div className="flex flex-wrap gap-1.5">
-            <OptionalParam
-              value={d.duration != null ? String(d.duration) : undefined}
-              onChange={(raw) =>
-                patch(id, {
-                  duration: raw ? Number(raw) || undefined : undefined,
-                })
-              }
-              options={VIDEO_DURATIONS}
-              autoLabel="Length: Auto"
-              customPlaceholder="Seconds"
-            />
-            <OptionalParam
-              value={d.aspectRatio}
-              onChange={(aspectRatio) => patch(id, { aspectRatio })}
-              options={VIDEO_ASPECTS}
-              autoLabel="Aspect: Auto"
-              customPlaceholder="W:H, e.g. 16:9"
-            />
-            <OptionalParam
-              value={d.resolution}
-              onChange={(resolution) => patch(id, { resolution })}
-              options={VIDEO_RESOLUTIONS}
-              autoLabel="Resolution: Auto"
-              customPlaceholder="1920x1080"
-            />
-          </div>
-        )}
-
-        {d.kind === "tts" && (
-          <div className="flex flex-wrap gap-1.5">
-            <OptionalParam
-              value={d.voice}
-              onChange={(voice) => patch(id, { voice })}
-              options={voiceChoices(
-                d.model ?? defaultModel,
-                voicesForModel(cat.models, d.model ?? defaultModel),
-              )}
-              autoLabel="Voice: Auto"
-              customPlaceholder="This model's voice id"
-            />
-          </div>
-        )}
+        {controls}
 
         {/* media input */}
         {isMediaIn && (
+          <div className="nodrag flex gap-2">
           <label
-            className={`nodrag flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed bg-sunken px-3 py-3 text-[12px] transition-colors ${
+            className={`flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed bg-sunken px-3 py-3 text-[12px] transition-colors ${
               upl
                 ? "border-live/50 text-live"
                 : "border-line2 text-muted hover:border-ink/40 hover:text-ink"
             }`}
           >
             <UploadSimple size={14} weight="bold" aria-hidden />
-            {upl ? "Uploading…" : d.artifactId ? "Replace file" : "Choose file"}
+            {upl ? t("common.uploading") : d.artifactId ? t("canvas.node.replaceFile") : t("canvas.node.chooseFile")}
             <input
               type="file"
               accept={
-                d.kind === "image.in"
-                  ? "image/*"
-                  : d.kind === "audio.in"
-                    ? "audio/*"
-                    : "video/*"
+                d.kind === "file.in"
+                  ? "image/*,audio/*,video/*"
+                  : d.kind === "image.in"
+                    ? "image/*"
+                    : d.kind === "audio.in"
+                      ? "audio/*"
+                      : "video/*"
               }
               className="hidden"
               onChange={(e) => {
@@ -500,20 +640,48 @@ export function FlowNode({ id, data, selected }: NodeProps) {
               }}
             />
           </label>
+          <button
+            type="button"
+            onClick={() => setPicking(true)}
+            disabled={upl}
+            title={t("canvas.node.assetsTip")}
+            className="flex items-center justify-center gap-1.5 rounded-xl border border-line2 bg-sunken px-3 text-[12px] text-muted transition-colors hover:border-ink/40 hover:text-ink disabled:opacity-50"
+          >
+            <Images size={14} aria-hidden />
+            {t("canvas.node.assets")}
+          </button>
+          </div>
+        )}
+        {picking && (
+          <AssetPicker
+            accept={d.kind === "file.in" ? ["image", "audio", "video"] : [mediaKind as AssetKind]}
+            onClose={() => setPicking(false)}
+            onPick={(a) => {
+              setPicking(false);
+              window.dispatchEvent(
+                new CustomEvent("kun:set-artifact", {
+                  detail: { nodeId: id, artifactId: a.id, mediaType: a.kind },
+                }),
+              );
+              patch(id, { runStatus: undefined, runError: undefined });
+            }}
+          />
         )}
         {isMediaIn && d.artifactId && !upl && (
           <MediaPreview
             url={`/api/media/${d.artifactId}`}
-            kind={d.kind.replace(".in", "")}
+            kind={mediaKind}
           />
         )}
 
         {/* Latest result of an AI node, so a graph reads at a glance. */}
-        {isAi && (hasContent || status === "running") && (
-          <ResultPreview
+        {d.kind === "llm" && (hasContent || status === "running") && (
+          <TextResult
             outputs={outputs}
             streaming={status === "running" ? streaming : ""}
             running={status === "running"}
+            copied={copied}
+            onCopy={copy}
           />
         )}
 
@@ -525,7 +693,7 @@ export function FlowNode({ id, data, selected }: NodeProps) {
               <div className="flex items-center justify-between px-0.5">
                 <span className="text-[11px] text-faint">
                   {status === "running" && streaming
-                    ? "Streaming…"
+                    ? t("canvas.node.streaming")
                     : describeOutputs(outputs)}
                 </span>
                 <div className="flex items-center gap-1">
@@ -535,11 +703,11 @@ export function FlowNode({ id, data, selected }: NodeProps) {
                     <button
                       type="button"
                       onClick={() => downloadOutputs(outputs)}
-                      title="Download output"
+                      title={t("canvas.node.downloadOutput")}
                       className="nodrag kun-node__tool"
                     >
                       <DownloadSimple size={13} weight="bold" aria-hidden />
-                      Save
+                      {t("common.save")}
                     </button>
                   )}
                   <button
@@ -551,7 +719,7 @@ export function FlowNode({ id, data, selected }: NodeProps) {
                           .join("\n\n"),
                       )
                     }
-                    title="Copy raw output"
+                    title={t("canvas.node.copyRaw")}
                     className="nodrag kun-node__tool"
                   >
                     {copied ? (
@@ -559,22 +727,17 @@ export function FlowNode({ id, data, selected }: NodeProps) {
                     ) : (
                       <Copy size={13} weight="bold" aria-hidden />
                     )}
-                    {copied ? "Copied" : "Copy"}
+                    {copied ? t("common.copied") : t("common.copy")}
                   </button>
                 </div>
               </div>
               {status === "running" && streaming ? (
-                <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-line bg-sunken px-3 py-2.5 font-mono text-[11px] leading-relaxed text-ink/85">
+                <pre dir="auto" className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-line bg-sunken px-3 py-2.5 font-mono text-[11px] leading-relaxed text-ink/85">
                   {streaming}
                   <span className="kun-caret" aria-hidden />
                 </pre>
               ) : (
-                outputs.map((o, i) =>
-                  (o.type === "text" && !o.text.trim()) ||
-                  (o.type !== "text" && !o.url) ? null : (
-                    <OutputRenderer key={i} output={o} />
-                  ),
-                )
+                <ResultGallery outputs={outputs} />
               )}
             </div>
           ) : status === "running" || status === "queued" ? (
@@ -584,84 +747,31 @@ export function FlowNode({ id, data, selected }: NodeProps) {
                 <span />
                 <span />
               </span>
-              Waiting for results…
+              {t("canvas.node.waiting")}
             </div>
           ) : (
             <div className="rounded-xl border border-dashed border-line2 px-3 py-5 text-center">
-              <p className="text-[12.5px] text-muted">No output yet</p>
-              <p className="mt-0.5 text-[11.5px] text-faint">
-                Connect something upstream, then run.
+              <p className="text-[12.5px] text-muted">{t("canvas.node.wireHere")}</p>
+              <p className="mx-auto mt-0.5 max-w-[22ch] text-[11.5px] leading-snug text-faint">
+                {t("canvas.node.wireHereBody")}
               </p>
             </div>
           ))}
 
         {status === "error" && (
-          <div className="rounded-xl border border-err/40 bg-err/10 px-3 py-2 text-[11.5px] leading-snug text-err">
+          <div dir="auto" className="rounded-xl border border-err/40 bg-err/10 px-3 py-2 text-[11.5px] leading-snug text-err">
             {d.runError}
           </div>
         )}
 
         {status === "skipped" && (
           <div className="rounded-xl border border-dashed border-line2 px-3 py-2 text-[11.5px] leading-snug text-faint">
-            {d.runError ?? "Skipped."}
+            {d.runError ?? t("canvas.node.skipped")}
           </div>
         )}
       </div>
     </NodeFrame>
   );
-}
-
-/**
- * Speech prompts fall back to whatever text arrives on the input. That needs
- * a subscription to every node and edge, so it lives here and only mounts for
- * speech nodes instead of taxing every card on the canvas.
- */
-function TtsPrompt({ id, value }: { id: string; value: string }) {
-  const incoming = useIncomingText(id);
-  return (
-    <textarea
-      value={value.trim() ? value : incoming}
-      onChange={(e) => patch(id, { prompt: e.target.value })}
-      aria-label="Prompt"
-      placeholder={
-        incoming ? "Connected text will be spoken…" : "Text to speak…"
-      }
-      rows={3}
-      className="kun-field nodrag nowheel resize-y"
-    />
-  );
-}
-
-function useIncomingText(nodeId: string) {
-  const nodes = useNodes();
-  const edges = useEdges();
-  return useMemo(() => {
-    const parts: string[] = [];
-    for (const e of edges) {
-      if (e.target !== nodeId) continue;
-      const src = nodes.find((n) => n.id === e.source);
-      if (!src) continue;
-      const data = src.data as FlowNodeData;
-      const fromOut = (data.outputs ?? [])
-        .filter(
-          (o): o is { type: "text"; text: string } =>
-            o.type === "text" && !!o.text?.trim(),
-        )
-        .map((o) => o.text);
-      if (fromOut.length) {
-        parts.push(...fromOut);
-        continue;
-      }
-      if (data.streamingText?.trim()) {
-        parts.push(data.streamingText);
-        continue;
-      }
-      if ((data.kind === "text" || data.kind === "note") && data.text?.trim()) {
-        parts.push(data.text);
-      }
-    }
-    return parts.join("\n\n");
-  }, [edges, nodeId, nodes]);
 }
 
 function voicesForModel(
@@ -690,11 +800,12 @@ function ModelPicker({
   recents: RecentModel[];
   live: ModelInfo[] | null;
 }) {
+  const { t } = useI18n();
   const cat = useCatalog();
   const [customModel, setCustomModel] = useState(false);
 
-  const suggested = def.models ?? [];
   const need = kindForNode(d.kind);
+  const suggested = suggestionsFor(cat, need, def.models);
   const seen = new Set<string>();
   const groups: { provider: string; label: string; items: ModelInfo[] }[] = [];
 
@@ -713,7 +824,7 @@ function ModelPicker({
   const liveById = new Map((live ?? []).map((m) => [m.id, m.label]));
   addGroup(
     "recent",
-    "Recent",
+    t("canvas.model.recent"),
     recents.map((r) => ({
       id: r.id,
       label:
@@ -724,7 +835,7 @@ function ModelPicker({
     })),
   );
 
-  addGroup("suggested", "Suggested", suggested);
+  addGroup("suggested", t("canvas.model.suggested"), suggested);
 
   if (need) {
     for (const g of groupModels(filterModels(cat.models.openrouter ?? [], need))) {
@@ -740,7 +851,7 @@ function ModelPicker({
   // Suggested and recent ids are OpenRouter's namespace, so only they can be
   // checked against its live list. Gateway ids are their own.
   const listedIds = live ? new Set(live.map((m) => m.id)) : null;
-  const orGone = "no longer listed by OpenRouter";
+  const orGone = t("canvas.model.retired");
   const retiredNote = new Map<string, string>();
   if (listedIds) {
     for (const s of suggested)
@@ -773,21 +884,22 @@ function ModelPicker({
 
   if (orphanGateway || showCustom) {
     return (
-      <div className="relative">
+      <div className="relative basis-full">
         <input
           value={d.model ?? ""}
           onChange={(e) => patch(id, { model: e.target.value })}
           autoComplete="off"
           spellCheck={false}
-          aria-label="Custom model id"
+          aria-label={t("canvas.model.customId")}
+          dir="ltr"
           placeholder={
             orphanGateway
-              ? "Gateway offline, model id kept…"
-              : "provider/model (any OpenRouter id)…"
+              ? t("canvas.model.gatewayOffline")
+              : t("canvas.model.customPh")
           }
           title={
             orphanGateway
-              ? "Saved gateway model. It will run through its provider when reachable."
+              ? t("canvas.model.gatewayTip")
               : undefined
           }
           className="kun-field nodrag pr-8 font-mono text-[11px]"
@@ -802,8 +914,8 @@ function ModelPicker({
                 provider: "openrouter",
               });
             }}
-            title="Back to preset models"
-            aria-label="Back to preset models"
+            title={t("canvas.model.backToPresets")}
+            aria-label={t("canvas.model.backToPresets")}
             className="nodrag absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-faint transition-colors hover:bg-ink/10 hover:text-ink"
           >
             <X size={10} weight="bold" aria-hidden />
@@ -817,8 +929,8 @@ function ModelPicker({
     <select
       value={d.model ?? defaultModel}
       onChange={(e) => pickModel(e.target.value)}
-      aria-label="Model"
-      className="kun-chip-select nodrag w-full"
+      aria-label={t("canvas.model.label")}
+      className="kun-chip-select nodrag w-auto"
     >
       {groups.map((g) => (
         <optgroup key={`${g.provider}-${g.label}`} label={g.label}>
@@ -837,58 +949,111 @@ function ModelPicker({
           })}
         </optgroup>
       ))}
-      <option value={CUSTOM_MODEL}>Custom model…</option>
+      <option value={CUSTOM_MODEL}>{t("canvas.model.custom")}</option>
     </select>
   );
 }
 
-function ResultPreview({
+/**
+ * What an Output node received, laid out to be read at a glance: text first,
+ * pictures and clips side by side, sound as a slim player. Stacking them at
+ * full width made a node taller than the screen.
+ */
+function ResultGallery({ outputs }: { outputs: NodeOutput[] }) {
+  const shown = outputs.filter((o) =>
+    o.type === "text" ? !!o.text.trim() : !!o.url,
+  );
+  const texts = shown.filter((o) => o.type === "text");
+  const visuals = shown.filter((o) => o.type === "image" || o.type === "video");
+  const sounds = shown.filter((o) => o.type === "audio");
+  return (
+    <div className="space-y-2">
+      {texts.map((o, i) => (
+        <div key={`t${i}`} dir="auto">
+          <OutputRenderer output={o} />
+        </div>
+      ))}
+      {visuals.length > 0 && (
+        <div className={visuals.length > 1 ? "grid grid-cols-2 gap-2" : ""}>
+          {visuals.map((o, i) => (
+            <OutputRenderer key={`v${i}`} output={o} />
+          ))}
+        </div>
+      )}
+      {sounds.map((o, i) => (
+        <OutputRenderer key={`a${i}`} output={o} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A text node's whole result, rendered the way an Output node used to: prose,
+ * code, JSON or a live page, with copy and save beside it. While it is being
+ * written the text streams in.
+ */
+function TextResult({
   outputs,
   streaming,
   running,
+  copied,
+  onCopy,
 }: {
   outputs: NodeOutput[];
   streaming: string;
   running: boolean;
+  copied: boolean;
+  onCopy: (text: string) => void;
 }) {
-  const media = outputs.filter(
-    (o): o is Exclude<NodeOutput, { type: "text" }> =>
-      o.type !== "text" && !!o.url,
-  );
+  const { t, tn } = useI18n();
   const text = outputs
     .filter((o): o is Extract<NodeOutput, { type: "text" }> => o.type === "text")
     .map((o) => o.text)
-    .join("\n")
+    .join("\n\n")
     .trim();
 
   if (running && streaming) {
     return (
-      <pre className="kun-rise max-h-28 overflow-hidden whitespace-pre-wrap break-words rounded-xl border border-line bg-sunken px-3 py-2 font-mono text-[11px] leading-relaxed text-ink/85">
-        {streaming.slice(-420)}
+      <pre dir="auto" className="kun-rise nowheel max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-xl border border-line bg-sunken px-3 py-2.5 font-mono text-[11px] leading-relaxed text-ink/85">
+        {streaming}
         <span className="kun-caret" aria-hidden />
       </pre>
     );
   }
-  if (running && !media.length && !text) return null;
+  if (!text) return null;
 
   return (
     <div className="kun-rise space-y-1.5">
-      {media.map((o, i) => (
-        <OutputRenderer key={i} output={o} />
-      ))}
-      {text && (
-        <div className="flex items-start gap-2 rounded-xl border border-line bg-sunken px-3 py-2">
-          <p className="line-clamp-4 min-w-0 flex-1 whitespace-pre-wrap break-words text-[12px] leading-relaxed text-ink/85">
-            {text}
-          </p>
-          <ArrowSquareOut
-            size={12}
-            weight="bold"
-            className="mt-0.5 shrink-0 text-faint"
-            aria-label="Full text appears on an Output node"
-          />
+      <div className="flex items-center justify-between px-0.5">
+        <span className="text-[11px] text-faint">{tn("canvas.result.chars", text.length)}</span>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => downloadOutputs(outputs)}
+            title={t("canvas.node.downloadResult")}
+            className="nodrag kun-node__tool"
+          >
+            <DownloadSimple size={13} weight="bold" aria-hidden />
+            {t("common.save")}
+          </button>
+          <button
+            type="button"
+            onClick={() => onCopy(text)}
+            title={t("canvas.node.copyResult")}
+            className="nodrag kun-node__tool"
+          >
+            {copied ? (
+              <Check size={13} weight="bold" aria-hidden />
+            ) : (
+              <Copy size={13} weight="bold" aria-hidden />
+            )}
+            {copied ? t("common.copied") : t("common.copy")}
+          </button>
         </div>
-      )}
+      </div>
+      <div dir="auto">
+        <OutputRenderer output={{ type: "text", text }} />
+      </div>
     </div>
   );
 }
@@ -899,23 +1064,32 @@ function OptionalParam({
   options,
   autoLabel,
   customPlaceholder,
+  glyph,
 }: {
+  glyph?: React.ReactNode;
   value?: string;
   onChange: (next?: string) => void;
   options: readonly { value: string; label: string }[];
   autoLabel: string;
   customPlaceholder?: string;
 }) {
+  const { t } = useI18n();
   const [forceCustom, setForceCustom] = useState(false);
   const known = options.some((o) => o.value === value);
   const custom = forceCustom || (!!value && !known);
   const selectValue = custom ? CUSTOM_PARAM : (value ?? "");
 
   return (
-    <div className="min-w-0">
+    <div className="relative min-w-0">
+      {glyph && (
+        <span className="pointer-events-none absolute left-2.5 top-1/2 flex -translate-y-1/2 items-center text-muted">
+          {glyph}
+        </span>
+      )}
       <select
         value={selectValue}
         aria-label={autoLabel}
+        style={glyph ? { paddingLeft: "1.75rem" } : undefined}
         onChange={(e) => {
           const next = e.target.value;
           if (next === CUSTOM_PARAM) {
@@ -934,7 +1108,7 @@ function OptionalParam({
             {o.label}
           </option>
         ))}
-        <option value={CUSTOM_PARAM}>Custom…</option>
+        <option value={CUSTOM_PARAM}>{t("canvas.param.custom")}</option>
       </select>
       {custom && (
         <input
@@ -942,7 +1116,7 @@ function OptionalParam({
           onChange={(e) => onChange(e.target.value.trim() || undefined)}
           spellCheck={false}
           placeholder={customPlaceholder}
-          aria-label={`${autoLabel} (custom)`}
+          aria-label={t("canvas.param.customOf", { label: autoLabel })}
           className="kun-field nodrag mt-1 font-mono text-[11px]"
         />
       )}
@@ -950,37 +1124,44 @@ function OptionalParam({
   );
 }
 
+/** A little rectangle in the chosen shape, so an aspect reads at a glance. */
+function AspectGlyph({ ratio }: { ratio?: number }) {
+  const r = ratio ?? 1.4;
+  const w = r >= 1 ? 12 : Math.round(12 * r);
+  const h = r >= 1 ? Math.round(12 / r) : 12;
+  return (
+    <span
+      aria-hidden
+      style={{ width: w, height: h }}
+      className={`block rounded-[2px] border border-current ${ratio ? "" : "border-dashed"}`}
+    />
+  );
+}
+
+/** Aspect picker: the shape drawn beside its label, "Aspect" when unset. */
+function AspectParam({
+  value,
+  options,
+  onChange,
+}: {
+  value?: string;
+  options: readonly { value: string; label: string }[];
+  onChange: (next?: string) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <OptionalParam
+      value={value}
+      onChange={onChange}
+      options={options}
+      autoLabel={t("canvas.param.aspect")}
+      customPlaceholder={t("canvas.param.aspectPh")}
+      glyph={<AspectGlyph ratio={aspectNumber(value)} />}
+    />
+  );
+}
+
 function MediaPreview({ url, kind }: { url: string; kind: string }) {
   if (!url) return null;
-  if (kind === "image")
-    return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
-        src={url}
-        alt=""
-        width={448}
-        height={224}
-        className="nowheel max-h-56 w-full rounded-xl border border-line object-cover"
-      />
-    );
-  if (kind === "audio")
-    return (
-      <audio
-        controls
-        preload="metadata"
-        src={url.includes("?") ? `${url}&play=1` : `${url}?play=1`}
-        className="nodrag w-full"
-      />
-    );
-  if (kind === "video")
-    return (
-      <video
-        controls
-        playsInline
-        preload="metadata"
-        src={url}
-        className="nowheel max-h-56 w-full rounded-xl border border-line bg-black"
-      />
-    );
-  return null;
+  return <MediaEmbed kind={kind} src={url} />;
 }

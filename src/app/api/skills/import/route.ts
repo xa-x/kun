@@ -14,7 +14,7 @@ export const runtime = "nodejs";
 /**
  * POST /api/skills/import
  *   { markdown }                    — one SKILL.md (pasted or uploaded)
- *   { bundle }                      — kun/skills bundle, or a workbook
+ *   { bundle }                      — kun/skills bundle, or a project
  *                                     export whose skills get materialized
  */
 export async function POST(req: NextRequest) {

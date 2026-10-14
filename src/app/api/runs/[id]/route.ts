@@ -3,6 +3,8 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { runNodes, runs } from "@/db/schema";
 import { fail, requireActor } from "@/lib/auth";
+import { runResult } from "@/lib/runs/result";
+import type { GraphDoc } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -18,7 +20,10 @@ export async function GET(
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
     const nodes = await db.select().from(runNodes).where(eq(runNodes.runId, id));
-    return NextResponse.json({ run, nodes });
+    // `result` is what the project's Output nodes received: the one thing an
+    // API or webhook caller usually wants.
+    const result = runResult(run.snapshot as GraphDoc | null, nodes);
+    return NextResponse.json({ run, nodes, result });
   } catch (e) {
     return fail(e);
   }

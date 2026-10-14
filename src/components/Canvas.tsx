@@ -12,6 +12,7 @@ import {
 } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { intlTag, useI18n } from "@/lib/i18n";
 import { X } from "@phosphor-icons/react";
 import {
   ReactFlow,
@@ -22,15 +23,17 @@ import {
   addEdge,
   useEdgesState,
   useNodesState,
+  getNodesBounds,
   useReactFlow,
   type Connection,
   type Edge,
   type Node,
   type IsValidConnection,
+  type OnConnectEnd,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import {
-  NODE_TYPES,
+  isRunnableKind,
   matchPorts,
   nodeDef,
   portAccepts,
@@ -44,7 +47,7 @@ import type {
   RunEvent,
 } from "@/lib/types";
 import { ModelCatalogProvider, useModelCatalog } from "@/lib/model-catalog";
-import { kindForNode } from "@/lib/models";
+import { kindForNode, suggestionsFor } from "@/lib/models";
 import {
   pickRecentDefault,
   recentsFor,
@@ -59,14 +62,36 @@ import { useSettings } from "@/lib/use-settings";
 import { GraphHistory } from "@/lib/history";
 import { parsePortable, remapPortable, toPortable } from "@/lib/portable";
 import { AssistantPanel } from "./AssistantPanel";
+import { AutomatePanel } from "./AutomatePanel";
+import { inputNames } from "@/lib/run-inputs";
 import { FlowNode } from "./FlowNode";
-import { DND_MIME, Palette } from "./Palette";
+import { DND_MIME } from "./Palette";
+import { NODE_KEYS, NodeToolbar } from "./NodeToolbar";
+import { PortPicker, type PortPick } from "./PortPicker";
+import {
+  frameAround,
+  frameAt,
+  membersOf,
+  moveMembers,
+  refitGroups,
+} from "@/lib/groups";
 import { PlayBar } from "./PlayBar";
 import { CanvasToolbar } from "./CanvasToolbar";
 import { PORT_COLOR } from "./node/tokens";
 import { APP_HOME } from "@/lib/routes";
 import { RunsPanel } from "./RunsPanel";
 import { SettingsModal } from "./SettingsModal";
+import { upgradeGraph } from "@/lib/upgrade";
+import { persistableData, settleStatus } from "@/lib/graph";
+import { readableViewport } from "@/lib/viewport";
+import {
+  CONFIRM_COST_USD,
+  estimateRun,
+  formatRunEstimate,
+  type RunScope,
+} from "@/lib/run-estimate";
+import { loadEstimates, peekEstimate } from "@/lib/use-estimates";
+import { Modal } from "./ui/Modal";
 import { StatusScreen } from "./StatusScreen";
 import { MiniConsole, type ConsoleLine } from "./MiniConsole";
 import { PublishTemplate } from "./PublishTemplate";
@@ -78,9 +103,47 @@ type FN = Node<FlowNodeData, "flow">;
 
 const nodeTypes = { flow: FlowNode };
 
+/** Where an image, video or speech node reads its prompt. */
+const MEDIA_PROMPT_PORT: Record<string, string> = {
+  "image.gen": "prompt",
+  "video.gen": "prompt",
+  tts: "text",
+};
+
+/** The size a node occupies, measured once rendered, else a typical card. */
+const sizeOf = (n: { measured?: { width?: number; height?: number }; width?: number; height?: number; data: { kind: string; w?: number; h?: number } }) => ({
+  w: n.measured?.width ?? n.width ?? (n.data.kind === "group" ? (n.data.w ?? 420) : 276),
+  h: n.measured?.height ?? n.height ?? (n.data.kind === "group" ? (n.data.h ?? 300) : 220),
+});
+
+/**
+ * A saved node as React Flow wants it. Group frames carry their size and sit
+ * behind the nodes they hold.
+ */
+function toFlowNode(n: {
+  id: string;
+  position: { x: number; y: number };
+  data: NodeData | FlowNodeData;
+}): FN {
+  const isGroup = n.data.kind === "group";
+  return {
+    id: n.id,
+    type: "flow",
+    position: n.position,
+    data: n.data as FlowNodeData,
+    ...(isGroup
+      ? {
+          style: { width: n.data.w ?? 420, height: n.data.h ?? 300 },
+          zIndex: -1,
+        }
+      : {}),
+  } as FN;
+}
+
 export function Canvas({
   graphId,
   startAssistant = false,
+  startPrompt,
   startRuns = false,
   startMini = false,
   shareToken,
@@ -88,12 +151,15 @@ export function Canvas({
 }: {
   graphId: string;
   startAssistant?: boolean;
+  /** Sent to the assistant once, when the editor opens from a first-run prompt. */
+  startPrompt?: string;
   startRuns?: boolean;
   startMini?: boolean;
   shareToken?: string;
   readOnly?: boolean;
 }) {
   const router = useRouter();
+  const { t, locale } = useI18n();
   const [nodes, setNodes, onNodesChange] = useNodesState<FN>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [title, setTitle] = useState("Untitled");
@@ -103,6 +169,7 @@ export function Canvas({
   const [showMini, setShowMini] = useState(startMini);
   const [showRuns, setShowRuns] = useState(startRuns);
   const [showAssistant, setShowAssistant] = useState(startAssistant);
+  const [showAutomate, setShowAutomate] = useState(false);
   const [showPublish, setShowPublish] = useState(false);
   const [books, setBooks] = useState<
     { id: string; title: string; updatedAt?: string | number }[]
@@ -157,7 +224,7 @@ export function Canvas({
       if (!need) return { model: "" };
       return pickRecentDefault(
         recentsFor(kind),
-        nodeDef(kind)?.models ?? [],
+        suggestionsFor(catalog, need, nodeDef(kind)?.models),
         catalog.models,
         catalog.errors,
         need,
@@ -175,6 +242,21 @@ export function Canvas({
   const activeRunIdRef = useRef<string | null>(null);
   const attachRunRef = useRef<(id: string) => Promise<void>>(async () => {});
   const rf = useReactFlow();
+
+  // Opens the view where text is readable (see lib/viewport.ts).
+  const showReadable = useCallback(
+    (duration: number) => {
+      const nodes = rf.getNodes();
+      const el = document.querySelector(".react-flow");
+      if (!nodes.length || !el) return;
+      const { width, height } = el.getBoundingClientRect();
+      rf.setViewport(readableViewport(getNodesBounds(nodes), { width, height }), {
+        duration,
+      });
+    },
+    [rf],
+  );
+
   // Latest-value refs for callbacks; synced before any passive effect runs.
   useLayoutEffect(() => {
     nodesRef.current = nodes;
@@ -198,24 +280,20 @@ export function Canvas({
         const { graph: g } = await readJson<{ graph?: { id: string; title: string; graph?: { nodes?: FN[]; edges?: Edge[]; viewport?: { x: number; y: number; zoom: number } } } }>(res);
         if (!alive || !g) return;
         setTitle(g.title);
-        const loaded = (g.graph?.nodes ?? []).map(
-          (n: {
-            id: string;
-            position: { x: number; y: number };
-            data: FlowNodeData;
-          }) =>
-            ({
-              id: n.id,
-              type: "flow",
-              position: n.position,
-              data: n.data,
-            }) as FN,
+        // Retired node kinds (Media Out, Skill) open as their replacements.
+        const raw = {
+          nodes: g.graph?.nodes ?? [],
+          edges: g.graph?.edges ?? [],
+        } as unknown as GraphDoc;
+        const upgraded = upgradeGraph(raw);
+        const loaded = upgraded.nodes.map((n) =>
+          toFlowNode({ ...n, data: settleStatus(n.data) }),
         );
         setNodes(loaded);
         setEdges(
-          (g.graph?.edges ?? []).map((e: Edge) => ({
+          (upgraded.edges as unknown as Edge[]).map((e) => ({
             ...e,
-            type: e.type ?? "smoothstep",
+            type: "default",
           })),
         );
         outputsRef.current = Object.fromEntries(
@@ -223,14 +301,19 @@ export function Canvas({
             .filter((n) => n.data.outputs?.length)
             .map((n) => [n.id, n.data.outputs as NodeOutput[]]),
         );
-        setDirty(false);
+        // An upgraded graph differs from what is stored; save it back on the
+        // next autosave, but never write from a read-only share link.
+        setDirty(upgraded !== raw && !readOnly);
         setReady(true);
+        // A saved view wins, unless it is the unreadable overview an earlier
+        // auto-fit saved (below 45%).
         const viewport = g.graph?.viewport;
-        if (viewport)
+        if (viewport && viewport.zoom >= 0.45)
           setTimeout(() => rf.setViewport(viewport, { duration: 0 }), 80);
+        else setTimeout(() => showReadable(0), 160);
       } catch {
         if (alive) {
-          toast("Couldn’t load this workbook.", "error");
+          toast(t("canvas.canvas.loadFailed"), "error");
           setMissing(true);
         }
       }
@@ -272,6 +355,8 @@ export function Canvas({
             output: NodeOutput[] | null;
             costUsd: number;
             error: string | null;
+            startedAt?: string | null;
+            durationMs?: number | null;
           }[];
         }>(detail);
         if (!alive || !d.nodes?.length) return;
@@ -288,6 +373,11 @@ export function Canvas({
                 ...n.data,
                 runStatus: row.status as FlowNodeData["runStatus"],
                 runError: row.error ?? undefined,
+                runStartedAt:
+                  row.status === "running" && row.startedAt
+                    ? Date.parse(row.startedAt)
+                    : undefined,
+                runDurationMs: row.durationMs ?? undefined,
                 outputs: outputs ?? n.data.outputs,
                 runUsage: row.costUsd
                   ? { costUsd: row.costUsd / 1e6 }
@@ -312,25 +402,7 @@ export function Canvas({
       nodes: nodes.map((n) => ({
         id: n.id,
         position: n.position,
-        data: {
-          kind: n.data.kind,
-          label: n.data.label,
-          text: n.data.text,
-          prompt: n.data.prompt,
-          model: n.data.model,
-          provider: n.data.provider,
-          voice: n.data.voice,
-          size: n.data.size,
-          aspectRatio: n.data.aspectRatio,
-          duration: n.data.duration,
-          resolution: n.data.resolution,
-          artifactId: n.data.artifactId,
-          skillId: n.data.skillId,
-          outputs: n.data.outputs,
-          runStatus: n.data.runStatus,
-          runError: n.data.runError,
-          runUsage: n.data.runUsage,
-        } as FlowNodeData,
+        data: persistableData(n.data) as FlowNodeData,
       })),
       edges,
       viewport: rf.getViewport(),
@@ -372,16 +444,16 @@ export function Canvas({
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ id: graphId, title, graph: doc }),
         });
-        if (!res.ok) throw new Error("Save failed");
+        if (!res.ok) throw new Error(t("canvas.canvas.saveFailed"));
         setDirty(false);
-        setSaved(new Date().toLocaleTimeString());
+        setSaved(new Date().toLocaleTimeString(intlTag(locale)));
         refreshBooks();
         if (manual) setTimeout(() => setSaved(null), 2000);
       } catch (e) {
-        toast(e instanceof Error ? e.message : "Save failed", "error");
+        toast(e instanceof Error ? e.message : t("canvas.canvas.saveFailed"), "error");
       }
     },
-    [graphId, title, doc, refreshBooks],
+    [graphId, title, doc, refreshBooks, t],
   );
 
   useEffect(() => {
@@ -407,18 +479,8 @@ export function Canvas({
 
   const applyDoc = useCallback(
     (next: GraphDoc, markDirty = true) => {
-      setNodes(
-        next.nodes.map(
-          (n) =>
-            ({
-              id: n.id,
-              type: "flow",
-              position: n.position,
-              data: n.data,
-            }) as FN,
-        ),
-      );
-      setEdges(next.edges.map((e) => ({ ...e, type: "smoothstep" })));
+      setNodes(next.nodes.map((n) => toFlowNode(n)));
+      setEdges(next.edges.map((e) => ({ ...e, type: "default" })));
       if (markDirty) setDirty(true);
     },
     [setNodes, setEdges],
@@ -444,26 +506,39 @@ export function Canvas({
 
   const arrange = useCallback(() => {
     snapshotNow();
-    const next = layoutGraph({
-      nodes: nodesRef.current.map((n) => ({
+    // Only runnable nodes are laid out; notes and frames keep their place, and
+    // each frame is then re-fitted around what is inside it.
+    const all = nodesRef.current;
+    const runnable = all.filter((n) => isRunnableKind(n.data.kind));
+    const ids = new Set(runnable.map((n) => n.id));
+    const laid = layoutGraph({
+      nodes: runnable.map((n) => ({
         id: n.id,
         type: "flow",
         position: n.position,
         data: n.data,
       })),
-      edges: edgesRef.current.map((e) => ({
-        id: e.id,
-        source: e.source,
-        sourceHandle: e.sourceHandle ?? null,
-        target: e.target,
-        targetHandle: e.targetHandle ?? null,
-      })),
+      edges: edgesRef.current
+        .filter((e) => ids.has(e.source) && ids.has(e.target))
+        .map((e) => ({
+          id: e.id,
+          source: e.source,
+          sourceHandle: e.sourceHandle ?? null,
+          target: e.target,
+          targetHandle: e.targetHandle ?? null,
+        })),
     });
-    applyDoc(next);
-    requestAnimationFrame(() =>
-      rf.fitView({ padding: 0.22, duration: 400, maxZoom: 1 }),
+    const sizes = new Map(all.map((n) => [n.id, sizeOf(n)]));
+    const notes = all
+      .filter((n) => !isRunnableKind(n.data.kind))
+      .map((n) => ({ id: n.id, type: "flow", position: n.position, data: n.data }));
+    const fitted = refitGroups(
+      [...notes, ...laid.nodes],
+      (n) => sizes.get(n.id) ?? { w: 276, h: 220 },
     );
-  }, [applyDoc, snapshotNow, rf]);
+    applyDoc({ ...laid, nodes: fitted });
+    requestAnimationFrame(() => showReadable(400));
+  }, [applyDoc, snapshotNow, showReadable]);
 
   const touch = useCallback(() => {
     if (readOnly) return;
@@ -484,10 +559,12 @@ export function Canvas({
       touch();
     };
     const onArtifact = (e: Event) => {
-      const { nodeId, artifactId } = (e as CustomEvent).detail;
+      const { nodeId, artifactId, mediaType } = (e as CustomEvent).detail;
       setNodes((ns) =>
         ns.map((n) =>
-          n.id === nodeId ? { ...n, data: { ...n.data, artifactId } } : n,
+          n.id === nodeId
+            ? { ...n, data: { ...n.data, artifactId, ...(mediaType ? { mediaType } : {}) } }
+            : n,
         ),
       );
       touch();
@@ -501,8 +578,8 @@ export function Canvas({
         es.filter((ed) => ed.source !== nodeId && ed.target !== nodeId),
       );
       setDirty(true);
-      toast("Node deleted.", "info", {
-        label: "Undo",
+      toast(t("canvas.canvas.nodeDeleted"), "info", {
+        label: t("canvas.canvas.undo"),
         onClick: () => {
           const prev = historyRef.current.undo({
             nodes: nodesRef.current.map((n) => ({
@@ -550,84 +627,17 @@ export function Canvas({
       });
       touch();
     };
-    const onExpandSkill = (e: Event) => {
-      if (readOnly) return;
-      const { nodeId } = (e as CustomEvent).detail as { nodeId: string };
-      const src = nodesRef.current.find((n) => n.id === nodeId);
-      if (!src || src.data.kind !== "skill") return;
-      const stamp = Date.now().toString(36);
-      const llmId = `n${stamp}l`;
-      const imgId = `n${stamp}i`;
-      const llmDef = nodeDef("llm");
-      const imgDef = nodeDef("image.gen");
-      if (!llmDef || !imgDef) return;
-      snapshotNow();
-      setNodes((ns) => [
-        ...ns,
-        {
-          id: llmId,
-          type: "flow",
-          position: { x: src.position.x + 340, y: src.position.y },
-          data: {
-            kind: "llm",
-            label: llmDef.label,
-            ...defaultModelFor("llm"),
-            skillId: src.data.skillId,
-            prompt: "Turn the skill into a concrete image brief for the next node.",
-          },
-        },
-        {
-          id: imgId,
-          type: "flow",
-          position: { x: src.position.x + 680, y: src.position.y },
-          data: {
-            kind: "image.gen",
-            label: imgDef.label,
-            ...defaultModelFor("image.gen"),
-          },
-        },
-      ]);
-      setEdges((es) => {
-        const next = [...es];
-        const a = matchPorts("skill", "llm");
-        const b = matchPorts("llm", "image.gen");
-        if (a) {
-          next.push({
-            id: `e${stamp}a`,
-            source: nodeId,
-            target: llmId,
-            sourceHandle: a.sourceHandle,
-            targetHandle: a.targetHandle,
-            type: "smoothstep",
-          });
-        }
-        if (b) {
-          next.push({
-            id: `e${stamp}b`,
-            source: llmId,
-            target: imgId,
-            sourceHandle: b.sourceHandle,
-            targetHandle: b.targetHandle,
-            type: "smoothstep",
-          });
-        }
-        return next;
-      });
-      setDirty(true);
-    };
     window.addEventListener("kun:update", onUpdate);
     window.addEventListener("kun:set-artifact", onArtifact);
     window.addEventListener("kun:remove-node", onRemove);
     window.addEventListener("kun:duplicate-node", onDuplicate);
-    window.addEventListener("kun:expand-skill", onExpandSkill);
     return () => {
       window.removeEventListener("kun:update", onUpdate);
       window.removeEventListener("kun:set-artifact", onArtifact);
       window.removeEventListener("kun:remove-node", onRemove);
       window.removeEventListener("kun:duplicate-node", onDuplicate);
-      window.removeEventListener("kun:expand-skill", onExpandSkill);
     };
-  }, [setNodes, setEdges, touch]);
+  }, [setNodes, setEdges, touch, t, readOnly, snapshotNow, applyDoc]);
 
   const isValidConnection = useCallback<IsValidConnection>(
     (conn) => {
@@ -658,7 +668,7 @@ export function Canvas({
                   x.targetHandle === e.targetHandle,
               ) === i,
           )
-          .map((e) => ({ ...e, type: "smoothstep" })),
+          .map((e) => ({ ...e, type: "default" })),
       );
       touch();
     },
@@ -672,8 +682,21 @@ export function Canvas({
       const id = `n${Date.now().toString(36)}${Math.random()
         .toString(36)
         .slice(2, 5)}`;
+      // Image, video and speech nodes have no text box of their own: they take
+      // their prompt from a wire. Arrive with a Prompt node already connected.
+      const promptPort = MEDIA_PROMPT_PORT[type];
+      const promptId = `${id}-prompt`;
       setNodes((ns) => [
         ...ns,
+        ...(promptPort
+          ? [
+              toFlowNode({
+                id: promptId,
+                position: { x: x - 340, y },
+                data: { kind: "text", label: "Prompt", text: "" },
+              }),
+            ]
+          : []),
         {
           id,
           type: "flow",
@@ -681,10 +704,23 @@ export function Canvas({
           data: {
             kind: type,
             label: def.label,
-            ...defaultModelFor(type),
+            ...(def.category === "ai" ? defaultModelFor(type) : {}),
+            ...(type === "comment" ? { tone: "sand" as const } : {}),
           },
         },
       ]);
+      if (promptPort)
+        setEdges((es) => [
+          ...es,
+          {
+            id: `e-${promptId}`,
+            source: promptId,
+            sourceHandle: "out",
+            target: id,
+            targetHandle: promptPort,
+            type: "default",
+          },
+        ]);
       touch();
     },
     [setNodes, touch, defaultModelFor],
@@ -722,6 +758,199 @@ export function Canvas({
       e.dataTransfer.dropEffect = "move";
     }
   }, []);
+
+  // --- groups -----------------------------------------------------------------
+  // A frame drawn behind some nodes. What is inside moves with it and can be run
+  // apart from the rest (Run group). Membership lives on the nodes (`data.group`).
+  const groupSelection = useCallback(() => {
+    if (readOnly) return;
+    const picked = nodesRef.current.filter(
+      (n) => n.selected && n.data.kind !== "group",
+    );
+    if (!picked.length) {
+      toast(t("canvas.canvas.selectToGroup"), "info");
+      return;
+    }
+    snapshotNow();
+    const id = `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 4)}`;
+    const f = frameAround(picked, sizeOf);
+    const frame = toFlowNode({
+      id,
+      position: f.position,
+      data: { kind: "group", label: "Group", tone: "sky", w: f.w, h: f.h },
+    });
+    const inside = new Set(picked.map((n) => n.id));
+    setNodes((ns) => [
+      frame,
+      ...ns.map((n) =>
+        inside.has(n.id)
+          ? { ...n, selected: false, data: { ...n.data, group: id } }
+          : n,
+      ),
+    ]);
+    setDirty(true);
+  }, [readOnly, snapshotNow, setNodes, t]);
+
+  // --- adding from a port -----------------------------------------------------
+  // An open port offers the nodes that can connect to it; picking one adds it
+  // beside the port and wires them together.
+  const [portPick, setPortPick] = useState<PortPick | null>(null);
+  const addConnected = useCallback(
+    (origin: PortPick, kind: string) => {
+      if (readOnly) return;
+      const from = nodesRef.current.find((n) => n.id === origin.nodeId);
+      const def = nodeDef(kind);
+      if (!from || !def) return;
+      const wire =
+        origin.side === "out"
+          ? matchPorts(from.data.kind, kind, origin.handle, null)
+          : matchPorts(kind, from.data.kind, null, origin.handle);
+      if (!wire) {
+        toast(t("canvas.canvas.cantConnect"), "info");
+        return;
+      }
+      const size = sizeOf(from);
+      const id = `n${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+      const position =
+        origin.side === "out"
+          ? { x: from.position.x + size.w + 100, y: from.position.y }
+          : { x: from.position.x - 340, y: from.position.y };
+      const node = toFlowNode({
+        id,
+        position,
+        data: {
+          kind,
+          label: def.label,
+          ...(def.category === "ai" ? defaultModelFor(kind) : {}),
+        },
+      });
+      // A media node brings its own Prompt node, unless this very wire is its prompt.
+      const promptPort = MEDIA_PROMPT_PORT[kind];
+      const wiresPrompt = origin.side === "out" && wire.targetHandle === promptPort;
+      const promptId = `${id}-prompt`;
+      snapshotNow();
+      setNodes((ns) => [
+        ...ns,
+        ...(promptPort && !wiresPrompt
+          ? [
+              toFlowNode({
+                id: promptId,
+                position: { x: position.x - 340, y: position.y + 120 },
+                data: { kind: "text", label: "Prompt", text: "" },
+              }),
+            ]
+          : []),
+        node,
+      ]);
+      setEdges((es) => [
+        ...es,
+        {
+          id: `e${id}`,
+          source: origin.side === "out" ? origin.nodeId : id,
+          sourceHandle: wire.sourceHandle,
+          target: origin.side === "out" ? id : origin.nodeId,
+          targetHandle: wire.targetHandle,
+          type: "default",
+        },
+        ...(promptPort && !wiresPrompt
+          ? [
+              {
+                id: `e-${promptId}`,
+                source: promptId,
+                sourceHandle: "out",
+                target: id,
+                targetHandle: promptPort,
+                type: "default",
+              },
+            ]
+          : []),
+      ]);
+      setDirty(true);
+      setPortPick(null);
+    },
+    [readOnly, snapshotNow, setNodes, setEdges, defaultModelFor, t],
+  );
+
+  useEffect(() => {
+    const onPortAdd = (e: Event) => {
+      if (readOnly) return;
+      const d = (e as CustomEvent).detail as {
+        nodeId: string;
+        handle: string;
+        side: "out" | "in";
+        type: PortPick["type"];
+        x: number;
+        y: number;
+      };
+      setPortPick({ ...d });
+    };
+    window.addEventListener("kun:port-add", onPortAdd);
+    return () => window.removeEventListener("kun:port-add", onPortAdd);
+  }, [readOnly]);
+
+  // Dropping a wire on empty canvas asks what to connect it to.
+  const onConnectEnd = useCallback<OnConnectEnd>(
+    (event, state) => {
+      if (readOnly || state.isValid || state.toNode) return;
+      const { fromNode, fromHandle } = state;
+      if (!fromNode || !fromHandle?.id) return;
+      const side = fromHandle.type === "source" ? "out" : "in";
+      const def = nodeDef((fromNode.data as { kind: string }).kind);
+      const port = (side === "out" ? def?.outputs : def?.inputs)?.find(
+        (p) => p.id === fromHandle.id,
+      );
+      if (!port) return;
+      const pt = "changedTouches" in event ? event.changedTouches[0] : event;
+      setPortPick({
+        nodeId: fromNode.id,
+        handle: port.id,
+        side,
+        type: port.type,
+        x: pt.clientX,
+        y: pt.clientY,
+      });
+    },
+    [readOnly],
+  );
+
+  const dragFrom = useRef<{ id: string; x: number; y: number } | null>(null);
+  const onNodeDragStart = useCallback((_: unknown, n: FN) => {
+    dragFrom.current = { id: n.id, x: n.position.x, y: n.position.y };
+  }, []);
+  // Dragging a frame carries its nodes along (those selected with it are
+  // already moving, so they are skipped).
+  const onNodeDrag = useCallback(
+    (_: unknown, n: FN) => {
+      const from = dragFrom.current;
+      if (!from || from.id !== n.id || n.data.kind !== "group") return;
+      const dx = n.position.x - from.x;
+      const dy = n.position.y - from.y;
+      if (!dx && !dy) return;
+      dragFrom.current = { id: n.id, x: n.position.x, y: n.position.y };
+      const moving = new Set(
+        nodesRef.current.filter((x) => x.selected).map((x) => x.id),
+      );
+      setNodes((ns) => moveMembers(ns, n.id, dx, dy, moving));
+    },
+    [setNodes],
+  );
+  // Dropping a node into or out of a frame changes what the frame holds.
+  const onNodeDragStop = useCallback(
+    (_: unknown, n: FN) => {
+      dragFrom.current = null;
+      if (n.data.kind === "group") return;
+      const now = nodesRef.current.find((x) => x.id === n.id) ?? n;
+      const next = frameAt(now, nodesRef.current, sizeOf);
+      if (next === now.data.group) return;
+      setNodes((ns) =>
+        ns.map((x) =>
+          x.id === n.id ? { ...x, data: { ...x.data, group: next } } : x,
+        ),
+      );
+      setDirty(true);
+    },
+    [setNodes],
+  );
 
   const [runsTick, setRunsTick] = useState(0);
 
@@ -815,6 +1044,16 @@ export function Canvas({
                   ...n.data,
                   runStatus: ev.status,
                   runError: ev.error,
+                  // Stamp the start for the elapsed timer; on finish keep how
+                  // long it took, to show beside the cost.
+                  runStartedAt:
+                    ev.status === "running" ? ev.ts : undefined,
+                  runDurationMs:
+                    ev.status === "done" && n.data.runStartedAt
+                      ? ev.ts - n.data.runStartedAt
+                      : ev.status === "running" || ev.status === "queued"
+                        ? undefined
+                        : n.data.runDurationMs,
                   outputs: ev.outputs ?? n.data.outputs,
                   runUsage:
                     ev.status === "running" || ev.status === "queued"
@@ -865,10 +1104,10 @@ export function Canvas({
         if (e instanceof DOMException && e.name === "AbortError") {
           if (stoppingRef.current) {
             resetInFlight("idle");
-            toast("Run cancelled.");
+            toast(t("canvas.canvas.runCancelled"));
           }
         } else {
-          const msg = e instanceof Error ? e.message : "Run failed";
+          const msg = e instanceof Error ? e.message : t("canvas.canvas.runFailed");
           resetInFlight("error", msg);
           toast(msg, "error");
         }
@@ -881,14 +1120,15 @@ export function Canvas({
         }
       }
     },
-    [applyRunEvent, resetInFlight],
+    [applyRunEvent, resetInFlight, t],
   );
   useLayoutEffect(() => {
     attachRunRef.current = attachRun;
   });
 
   const run = useCallback(
-    async (from?: string) => {
+    async (scope: RunScope = {}) => {
+      const { only, from, nodes: groupIds } = scope;
       stoppingRef.current = false;
       setRunCostUsd(null);
       setConsoleLines([]);
@@ -902,12 +1142,25 @@ export function Canvas({
           edges: edgesRef.current,
         },
         graphId,
+        only,
         from,
+        nodes: groupIds,
         cached: outputsRef.current,
       };
-      const targets = from
-        ? downstreamIds(from, edgesRef.current)
-        : nodesRef.current.map((n) => n.id);
+      const targetsAll = only
+        ? [only]
+        : groupIds?.length
+          ? groupIds
+          : from
+            ? downstreamIds(from, edgesRef.current)
+            : nodesRef.current
+                .filter((n) => isRunnableKind(n.data.kind))
+                .map((n) => n.id);
+      // Frozen nodes are not run, so they are not queued either.
+      const frozenIds = new Set(
+        nodesRef.current.filter((n) => n.data.frozen).map((n) => n.id),
+      );
+      const targets = targetsAll.filter((id) => id === only || !frozenIds.has(id));
       setNodes((ns) =>
         ns.map((n) =>
           targets.includes(n.id)
@@ -934,18 +1187,79 @@ export function Canvas({
         const j = await readJson<{ runId?: string; error?: string }>(res);
         if (!res.ok || !j.runId) {
           throw new Error(
-            typeof j.error === "string" ? j.error : `Run failed (${res.status})`,
+            typeof j.error === "string" ? j.error : t("canvas.canvas.runFailedStatus", { status: res.status }),
           );
         }
         await attachRun(j.runId);
       } catch (e) {
-        const msg = e instanceof Error ? e.message : "Run failed";
+        const msg = e instanceof Error ? e.message : t("canvas.canvas.runFailed");
         resetInFlight("error", msg, targets);
         toast(msg, "error");
         setRunning(false);
       }
     },
-    [setNodes, graphId, resetInFlight, attachRun],
+    [setNodes, graphId, resetInFlight, attachRun, t],
+  );
+
+  // --- cost and time before a run ------------------------------------------
+  // Typical figures come from earlier runs (see /api/estimates). A run that is
+  // expected to cost real money asks first; cheap runs go straight through.
+  const modelOf = useCallback(
+    (n: FN) => (n.data.model as string | undefined) || defaultModelFor(n.data.kind).model,
+    [defaultModelFor],
+  );
+  const estimateFor = useCallback(
+    (scope: RunScope) =>
+      estimateRun({
+        nodes: nodesRef.current,
+        edges: edgesRef.current,
+        scope,
+        estimateOf: (id) => {
+          const n = nodesRef.current.find((x) => x.id === id);
+          return n ? peekEstimate(modelOf(n)) : null;
+        },
+      }),
+    [modelOf],
+  );
+  const aiModels = useCallback(
+    () =>
+      nodesRef.current
+        .filter((n) => nodeDef(n.data.kind)?.category === "ai")
+        .map((n) => modelOf(n))
+        .filter(Boolean),
+    [modelOf],
+  );
+
+  const [runHint, setRunHint] = useState<string | null>(null);
+  useEffect(() => {
+    if (!ready || running) return;
+    let alive = true;
+    const timer = setTimeout(async () => {
+      await loadEstimates(aiModels());
+      if (alive) setRunHint(formatRunEstimate(estimateFor({}), t));
+    }, 500);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, running, nodes, edges, aiModels, estimateFor]);
+
+  const [confirmRun, setConfirmRun] = useState<{
+    scope: RunScope;
+    label: string;
+  } | null>(null);
+  const requestRun = useCallback(
+    async (scope: RunScope = {}) => {
+      await loadEstimates(aiModels());
+      const est = estimateFor(scope);
+      if (est.costUsd >= CONFIRM_COST_USD) {
+        setConfirmRun({ scope, label: formatRunEstimate(est, t) ?? "" });
+        return;
+      }
+      void run(scope);
+    },
+    [aiModels, estimateFor, run],
   );
 
   const stop = useCallback(() => {
@@ -967,9 +1281,9 @@ export function Canvas({
       const el = e.target as HTMLElement | null;
       if (el?.closest("input, textarea, select, button, label, video, audio"))
         return;
-      run(n.id);
+      requestRun({ only: n.id });
     },
-    [run],
+    [requestRun],
   );
 
   const openBook = useCallback(
@@ -991,30 +1305,88 @@ export function Canvas({
         body: JSON.stringify({ title: "Untitled", graph: starterGraph() }),
       });
       const j = await readJson<{ graph?: { id: string }; error?: string }>(res);
-      if (!res.ok || !j.graph?.id) throw new Error(j.error || "Create failed");
+      if (!res.ok || !j.graph?.id) throw new Error(j.error || t("canvas.canvas.createFailed"));
       router.push(`/w/${j.graph.id}`);
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Couldn’t create workbook.", "error");
+      toast(e instanceof Error ? e.message : t("canvas.canvas.createProjectFailed"), "error");
     }
-  }, [running, dirty, save, router]);
+  }, [running, dirty, save, router, t]);
 
   useEffect(() => {
     const onRunNode = (e: Event) => {
-      const { nodeId } = (e as CustomEvent).detail;
-      run(nodeId);
+      const { nodeId, mode } = (e as CustomEvent).detail as {
+        nodeId: string;
+        mode?: "only" | "from";
+      };
+      requestRun(mode === "from" ? { from: nodeId } : { only: nodeId });
     };
     window.addEventListener("kun:run-node", onRunNode);
     return () => window.removeEventListener("kun:run-node", onRunNode);
-  }, [run]);
+  }, [requestRun]);
+
+  useEffect(() => {
+    const onRunGroup = (e: Event) => {
+      const { nodeId } = (e as CustomEvent).detail as { nodeId: string };
+      const ids = membersOf(nodesRef.current, nodeId)
+        .filter((n) => isRunnableKind(n.data.kind))
+        .map((n) => n.id);
+      if (!ids.length) {
+        toast(t("canvas.canvas.emptyGroup"), "info");
+        return;
+      }
+      requestRun({ nodes: ids });
+    };
+    const onUngroup = (e: Event) => {
+      if (readOnly) return;
+      const { nodeId } = (e as CustomEvent).detail as { nodeId: string };
+      snapshotNow();
+      setNodes((ns) =>
+        ns
+          .filter((n) => n.id !== nodeId)
+          .map((n) =>
+            n.data.group === nodeId
+              ? { ...n, data: { ...n.data, group: undefined } }
+              : n,
+          ),
+      );
+      setDirty(true);
+    };
+    window.addEventListener("kun:run-group", onRunGroup);
+    window.addEventListener("kun:ungroup", onUngroup);
+    return () => {
+      window.removeEventListener("kun:run-group", onRunGroup);
+      window.removeEventListener("kun:ungroup", onUngroup);
+    };
+  }, [requestRun, readOnly, snapshotNow, setNodes, t]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
       const target = e.target as HTMLElement | null;
-      const typing = !!target?.closest("input, textarea, [contenteditable=true]");
+      const typing = !!target?.closest(
+        "input, textarea, select, [contenteditable=true], [role=textbox], [role=dialog]",
+      );
       if (meta && e.key === "s") {
         e.preventDefault();
         if (!readOnly) save(true);
+      }
+      if (meta && e.key.toLowerCase() === "g" && !typing && !readOnly) {
+        e.preventDefault();
+        groupSelection();
+      }
+      // Bare keys: 1-8 and C add a node, V / Esc put the selection down.
+      if (!meta && !e.altKey && !typing && !readOnly && !e.repeat) {
+        const kind = NODE_KEYS[e.key.toLowerCase()];
+        if (kind) {
+          e.preventDefault();
+          addNode(kind);
+        } else if (e.key.toLowerCase() === "v" || e.key === "Escape") {
+          setNodes((ns) =>
+            ns.some((n) => n.selected)
+              ? ns.map((n) => (n.selected ? { ...n, selected: false } : n))
+              : ns,
+          );
+        }
       }
       if (meta && e.key === "z" && !e.shiftKey && !typing) {
         e.preventDefault();
@@ -1076,7 +1448,7 @@ export function Canvas({
           { nodeIds: selected.map((n) => n.id) },
         );
         void navigator.clipboard.writeText(JSON.stringify(pack, null, 2));
-        toast("Copied nodes.", "ok");
+        toast(t("canvas.canvas.copiedNodes"), "ok");
       }
       if (meta && e.key === "v" && !typing && !readOnly) {
         void (async () => {
@@ -1084,10 +1456,13 @@ export function Canvas({
           const pack = parsePortable(text);
           if (!pack) return;
           snapshotNow();
-          const incoming = remapPortable(pack, {
-            x: 80 + Math.random() * 40,
-            y: 80 + Math.random() * 40,
-          });
+          // Pasted nodes get the same clean-up as an opened project.
+          const incoming = upgradeGraph(
+            remapPortable(pack, {
+              x: 80 + Math.random() * 40,
+              y: 80 + Math.random() * 40,
+            }),
+          );
           applyDoc({
             nodes: [
               ...nodesRef.current.map((n) => ({
@@ -1109,13 +1484,13 @@ export function Canvas({
               ...incoming.edges,
             ],
           });
-          toast("Pasted nodes.", "ok");
+          toast(t("canvas.canvas.pastedNodes"), "ok");
         })();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [save, applyDoc, snapshotNow, readOnly]);
+  }, [save, applyDoc, snapshotNow, readOnly, groupSelection, addNode, setNodes, t]);
 
   const statusOf = useMemo(() => {
     const m: Record<string, string> = {};
@@ -1148,30 +1523,47 @@ export function Canvas({
   const toggleAssistant = () => {
     const next = !showAssistant;
     setShowAssistant(next);
-    if (next && showRuns) {
-      setShowRuns(false);
-      syncPanelFlag("runs", false);
+    if (next) {
+      setShowAutomate(false);
+      if (showRuns) {
+        setShowRuns(false);
+        syncPanelFlag("runs", false);
+      }
     }
   };
   const toggleRuns = () => {
     const next = !showRuns;
     setShowRuns(next);
     syncPanelFlag("runs", next);
-    if (next && showAssistant) setShowAssistant(false);
+    if (next) {
+      setShowAssistant(false);
+      setShowAutomate(false);
+    }
+  };
+  const toggleAutomate = () => {
+    const next = !showAutomate;
+    setShowAutomate(next);
+    if (next) {
+      setShowAssistant(false);
+      if (showRuns) {
+        setShowRuns(false);
+        syncPanelFlag("runs", false);
+      }
+    }
   };
 
   if (missing) {
     return (
       <StatusScreen
         kicker="404"
-        title="This workbook isn’t here"
-        body="It may have been deleted, or the link is out of date."
+        title={t("canvas.canvas.missingTitle")}
+        body={t("canvas.canvas.missingBody")}
         action={
           <Link
             href={readOnly ? "/" : APP_HOME}
             className="kun-btn-primary inline-flex h-11 items-center rounded-full px-6 text-[14px] font-medium"
           >
-            {readOnly ? "Go to Kun" : "Back to workbooks"}
+            {readOnly ? t("canvas.canvas.goToKun") : t("canvas.canvas.backToProjects")}
           </Link>
         }
       />
@@ -1181,58 +1573,62 @@ export function Canvas({
   return (
     <ModelCatalogProvider value={catalog}>
       <div className="flex h-dvh w-full flex-col bg-canvas">
-        <PlayBar
-          readOnly={readOnly}
-          runsOpen={showRuns}
-          onRuns={readOnly ? undefined : toggleRuns}
-          title={title}
-          onTitle={(t: string) => {
-            setTitle(t);
-            touch();
-          }}
-          running={running}
-          onRun={() => run()}
-          onStop={stop}
-          onSave={() => save(true)}
-          saved={saved}
-          dirty={dirty}
-          costLabel={fmtUsd(runCostUsd)}
-          books={books}
-          activeId={graphId}
-          onOpen={(id) => openBook(id)}
-          onNew={() => newBook()}
-          onSettings={() => settingsApi.setShowSettings(true)}
-          assistantOpen={showAssistant}
-          onAssistant={readOnly ? undefined : toggleAssistant}
-          onPublish={readOnly ? undefined : () => setShowPublish(true)}
-          onShare={
-            readOnly
-              ? undefined
-              : async () => {
-                  try {
-                    const res = await fetch(`/api/graphs/${graphId}/share`, {
-                      method: "POST",
-                      headers: { "content-type": "application/json" },
-                      body: JSON.stringify({ permission: "view" }),
-                    });
-                    const j = await readJson<{ url?: string; error?: string }>(res);
-                    if (!res.ok || !j.url) throw new Error(j.error || "Share failed");
-                    const url = `${window.location.origin}${j.url}`;
-                    await navigator.clipboard.writeText(url);
-                    toast("Share link copied.", "ok");
-                  } catch (e) {
-                    toast(e instanceof Error ? e.message : "Share failed", "error");
-                  }
-                }
-          }
-        />
         <div className="relative flex min-h-0 flex-1">
         <div
           className="relative min-w-0 flex-1"
           onDrop={onDrop}
           onDragOver={onDragOver}
         >
+          <PlayBar
+            readOnly={readOnly}
+            runsOpen={showRuns}
+            onRuns={readOnly ? undefined : toggleRuns}
+            automateOpen={showAutomate}
+            onAutomate={readOnly ? undefined : toggleAutomate}
+            title={title}
+            onTitle={(next: string) => {
+              setTitle(next);
+              touch();
+            }}
+            running={running}
+            onRun={() => requestRun()}
+            runHint={runHint}
+            onStop={stop}
+            onSave={() => save(true)}
+            saved={saved}
+            dirty={dirty}
+            costLabel={fmtUsd(runCostUsd)}
+            books={books}
+            activeId={graphId}
+            onOpen={(id) => openBook(id)}
+            onNew={() => newBook()}
+            onSettings={() => settingsApi.setShowSettings(true)}
+            assistantOpen={showAssistant}
+            onAssistant={readOnly ? undefined : toggleAssistant}
+            onPublish={readOnly ? undefined : () => setShowPublish(true)}
+            onShare={
+              readOnly
+                ? undefined
+                : async () => {
+                    try {
+                      const res = await fetch(`/api/graphs/${graphId}/share`, {
+                        method: "POST",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({ permission: "view" }),
+                      });
+                      const j = await readJson<{ url?: string; error?: string }>(res);
+                      if (!res.ok || !j.url) throw new Error(j.error || t("canvas.canvas.shareFailed"));
+                      const url = `${window.location.origin}${j.url}`;
+                      await navigator.clipboard.writeText(url);
+                      toast(t("canvas.canvas.shareCopied"), "ok");
+                    } catch (e) {
+                      toast(e instanceof Error ? e.message : t("canvas.canvas.shareFailed"), "error");
+                    }
+                  }
+            }
+          />
           <ReactFlow<FN>
+            proOptions={{ hideAttribution: true }}
             nodes={nodes}
             edges={styledEdges}
             nodeTypes={nodeTypes}
@@ -1242,8 +1638,8 @@ export function Canvas({
               // as the header × button.
               if (c.some((ch) => ch.type === "remove")) {
                 snapshotNow();
-                toast("Node deleted.", "info", {
-                  label: "Undo",
+                toast(t("canvas.canvas.nodeDeleted"), "info", {
+                  label: t("canvas.canvas.undo"),
                   onClick: () => {
                     const prev = historyRef.current.undo({
                       nodes: nodesRef.current.map((n) => ({
@@ -1277,9 +1673,13 @@ export function Canvas({
             isValidConnection={isValidConnection}
             connectionRadius={34}
             onNodeDoubleClick={onNodeDoubleClick}
-            defaultEdgeOptions={{ type: "smoothstep" }}
+            onConnectEnd={onConnectEnd}
+            onNodeDragStart={onNodeDragStart}
+            onNodeDrag={onNodeDrag}
+            onNodeDragStop={onNodeDragStop}
+            defaultEdgeOptions={{ type: "default" }}
             fitView
-            fitViewOptions={{ padding: 0.22, maxZoom: 1 }}
+            fitViewOptions={{ padding: 0.22, maxZoom: 1, minZoom: 0.6 }}
             minZoom={0.05}
             maxZoom={4}
             colorMode={theme.resolved}
@@ -1308,7 +1708,7 @@ export function Canvas({
                     theme.resolved === "light" ? "#dcdcd6" : "#31373b"
                   }`,
                   borderRadius: 12,
-                  marginTop: 12,
+                  marginTop: 76,
                   marginRight: 12,
                   width: 168,
                   height: 112,
@@ -1331,20 +1731,25 @@ export function Canvas({
               <Panel position="top-center">
                 <div className="kun-pop rounded-full border border-line2 bg-raised/95 px-5 py-2 text-[13px] text-muted shadow-lg backdrop-blur">
                   {readOnly
-                    ? "This workbook is empty."
-                    : "Empty workbook. Add a node from the library, or ask the assistant."}
+                    ? t("canvas.canvas.emptyReadOnly")
+                    : t("canvas.canvas.emptyHint")}
                 </div>
               </Panel>
             )}
           </ReactFlow>
           {!readOnly && (
-            <Palette
+            <NodeToolbar
               onAdd={addNode}
-              defs={NODE_TYPES}
-              emptyCanvas={ready && nodes.length === 0}
+              onGroup={groupSelection}
+              onSelect={() =>
+                setNodes((ns) => ns.map((n) => (n.selected ? { ...n, selected: false } : n)))
+              }
+              selectedCount={
+                nodes.filter((n) => n.selected && n.data.kind !== "group").length
+              }
             />
           )}
-          <div className="absolute bottom-3 right-3 z-10 hidden w-[min(380px,calc(100%-336px))] min-w-[220px] md:block">
+          <div className="absolute bottom-3 end-3 z-10 hidden w-[min(380px,calc(100%-336px))] min-w-[220px] md:block">
             <MiniConsole
               lines={consoleLines}
               runId={activeRunId}
@@ -1355,9 +1760,10 @@ export function Canvas({
           </div>
         </div>
 
-        {showAssistant && !readOnly && (
+        {showAssistant && !readOnly && ready && (
           <AssistantPanel
             graphId={graphId}
+            autoPrompt={startPrompt}
             selectedNodeIds={nodes.filter((n) => n.selected).map((n) => n.id)}
             graph={{
               nodes: nodes.map((n) => ({
@@ -1374,37 +1780,42 @@ export function Canvas({
                 targetHandle: e.targetHandle ?? null,
               })),
             }}
-            onApply={(next: GraphDoc) => {
-              setNodes(
-                next.nodes.map(
-                  (n) =>
-                    ({
-                      id: n.id,
-                      type: "flow",
-                      position: n.position,
-                      data: n.data,
-                    }) as FN,
-                ),
-              );
-              setEdges(next.edges.map((e) => ({ ...e, type: "smoothstep" })));
+            onApply={(applied: GraphDoc) => {
+              // The assistant may type a prompt into a media node; give it the
+              // wired Text node the canvas expects.
+              const next = upgradeGraph(applied);
+              // Nodes the assistant adds to a canvas that was empty (or that
+              // sit outside the view) must be brought into sight.
+              const grew = next.nodes.length > nodesRef.current.length;
+              if (grew) requestAnimationFrame(() => setTimeout(() => showReadable(400), 120));
+              setNodes(next.nodes.map((n) => toFlowNode(n)));
+              setEdges(next.edges.map((e) => ({ ...e, type: "default" })));
               touch();
             }}
             onClose={() => setShowAssistant(false)}
           />
         )}
+        {showAutomate && !readOnly && ready && (
+          <AutomatePanel
+            graphId={graphId}
+            inputNames={inputNames({ nodes: doc.nodes.map((n) => ({ ...n, type: "flow" })) })}
+            saveFirst={() => save()}
+            onClose={() => setShowAutomate(false)}
+          />
+        )}
         {showRuns && !readOnly && (
           <aside
-            aria-label="Run history"
-            className="kun-pop z-30 flex min-h-0 w-[388px] shrink-0 flex-col border-l border-line bg-card max-md:absolute max-md:inset-0 max-md:w-full max-md:border-l-0"
+            aria-label={t("canvas.canvas.runHistory")}
+            className="kun-pop z-30 flex min-h-0 w-[388px] shrink-0 flex-col border-s border-line bg-card max-md:absolute max-md:inset-0 max-md:w-full max-md:border-s-0"
           >
-            <header className="flex h-12 shrink-0 items-center justify-between border-b border-line pl-4 pr-3">
-              <p className="text-[13.5px] font-medium text-ink">Run history</p>
+            <header className="flex h-12 shrink-0 items-center justify-between border-b border-line ps-4 pe-3">
+              <p className="text-[13.5px] font-medium text-ink">{t("canvas.canvas.runHistory")}</p>
               <div className="flex items-center gap-1">
                 <Link
                   href={`/runs?graphId=${graphId}`}
                   className="rounded-full px-3 py-1.5 text-[12.5px] text-muted transition-colors hover:bg-ink/8 hover:text-ink"
                 >
-                  All runs
+                  {t("canvas.canvas.allRuns")}
                 </Link>
                 <button
                   type="button"
@@ -1412,8 +1823,8 @@ export function Canvas({
                     setShowRuns(false);
                     syncPanelFlag("runs", false);
                   }}
-                  aria-label="Close run history"
-                  title="Close run history"
+                  aria-label={t("canvas.canvas.closeRunHistory")}
+                  title={t("canvas.canvas.closeRunHistory")}
                   className="flex h-8 w-8 items-center justify-center rounded-full text-faint transition-colors hover:bg-ink/8 hover:text-ink"
                 >
                   <X size={14} weight="bold" aria-hidden />
@@ -1433,6 +1844,47 @@ export function Canvas({
             onboarding={settingsApi.needsOnboard && !settingsApi.showSettings}
             onClose={settingsApi.dismissOnboard}
           />
+        )}
+        {portPick && (
+          <PortPicker
+            pick={portPick}
+            onPick={(kind) => addConnected(portPick, kind)}
+            onClose={() => setPortPick(null)}
+          />
+        )}
+        {confirmRun && (
+          <Modal
+            title={t("canvas.canvas.confirmTitle")}
+            description={t("canvas.canvas.confirmDesc")}
+            onClose={() => setConfirmRun(null)}
+            footer={
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmRun(null)}
+                  className="kun-btn-secondary h-10 rounded-full px-5 text-[13.5px] font-medium"
+                >
+                  {t("common.cancel")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const scope = confirmRun.scope;
+                    setConfirmRun(null);
+                    void run(scope);
+                  }}
+                  className="kun-btn-primary h-10 rounded-full px-6 text-[13.5px] font-medium"
+                >
+                  {t("common.run")}
+                </button>
+              </div>
+            }
+          >
+            <p className="font-mono text-[15px] text-ink">{confirmRun.label}</p>
+            <p className="mt-2 text-[13px] leading-relaxed text-muted">
+              {t("canvas.canvas.confirmBody")}
+            </p>
+          </Modal>
         )}
         {showPublish && (
           <PublishTemplate

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inertNodeIds, freshSourceIds } from "./graph";
+import { freshSourceIds, inertNodeIds, persistableData, settleStatus } from "./graph";
 
 type N = { id: string; data: { kind: string } };
 type E = {
@@ -119,5 +119,59 @@ describe("freshSourceIds", () => {
       new Set(["t", "ai"]),
     );
     expect(fresh.size).toBe(0);
+  });
+});
+
+
+describe("persistableData", () => {
+  it("keeps every field a project needs, including ones added later", () => {
+    const saved = persistableData({
+      kind: "file.in",
+      mediaType: "audio",
+      group: "g1",
+      frozen: true,
+      pinned: true,
+      tone: "mint",
+      w: 400,
+      h: 300,
+      outputs: [{ type: "text", text: "kept" }],
+      runStatus: "done",
+    });
+    expect(saved).toMatchObject({
+      mediaType: "audio",
+      group: "g1",
+      frozen: true,
+      pinned: true,
+      tone: "mint",
+      w: 400,
+      h: 300,
+      runStatus: "done",
+    });
+    expect(saved.outputs).toHaveLength(1);
+  });
+
+  it("drops only what describes the moment", () => {
+    const saved = persistableData({
+      kind: "llm",
+      streamingText: "partial…",
+      runStartedAt: 123,
+    });
+    expect(saved).toEqual({ kind: "llm" });
+  });
+});
+
+
+describe("settleStatus", () => {
+  it("turns a stale in-flight status into what the node holds", () => {
+    expect(
+      settleStatus({ kind: "image.gen", runStatus: "queued", outputs: [{ type: "image", url: "/x" }] }),
+    ).toMatchObject({ runStatus: "done" });
+    expect(settleStatus({ kind: "image.gen", runStatus: "running", runStartedAt: 1 })).toEqual({
+      kind: "image.gen",
+    });
+  });
+  it("leaves settled nodes alone", () => {
+    const d = { kind: "llm", runStatus: "error" as const };
+    expect(settleStatus(d)).toBe(d);
   });
 });

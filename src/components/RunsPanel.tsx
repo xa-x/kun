@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { CaretDown } from "@phosphor-icons/react";
-import { ago, fmtCost, fmtDur } from "@/lib/format";
+import { fmtCost } from "@/lib/format";
 import { readJson } from "@/lib/http";
+import { useI18n } from "@/lib/i18n";
+import type { MessageKey } from "@/lib/i18n";
 
 /**
- * Run history for the current workbook, with totals (cost, tokens, duration,
+ * Run history for the current project, with totals (cost, tokens, duration,
  * status) that expand into per-node rows.
  */
 
@@ -34,12 +36,12 @@ interface RunNodeRow {
   error: string | null;
 }
 
-const TRIGGER: Record<string, string> = {
-  node: "Single node",
-  manual: "Full run",
-  api: "API",
-  cron: "Schedule",
-  webhook: "Webhook",
+const TRIGGER: Record<string, MessageKey> = {
+  node: "editor.runs.trigger.node",
+  manual: "editor.runs.trigger.manual",
+  api: "editor.runs.trigger.api",
+  cron: "editor.runs.trigger.cron",
+  webhook: "editor.runs.trigger.webhook",
 };
 
 export function RunsPanel({
@@ -49,6 +51,7 @@ export function RunsPanel({
   graphId: string | null;
   refreshKey: number;
 }) {
+  const { t, tn, ago, dur } = useI18n();
   const [runs, setRuns] = useState<RunRow[]>([]);
   const [open, setOpen] = useState<string | null>(null);
   const [nodes, setNodes] = useState<Record<string, RunNodeRow[]>>({});
@@ -96,21 +99,21 @@ export function RunsPanel({
   if (!graphId)
     return (
       <p className="px-4 py-6 text-[13px] text-faint">
-        Save the workbook to collect run history.
+        {t("editor.runs.saveFirst")}
       </p>
     );
 
   if (failed)
     return (
-      <p className="px-4 py-6 text-[13px] text-err">Couldn’t load run history.</p>
+      <p className="px-4 py-6 text-[13px] text-err">{t("editor.runs.loadFailed")}</p>
     );
 
   if (!runs.length)
     return (
       <div className="px-4 py-10 text-center">
-        <p className="text-[14px] font-medium text-ink">No runs yet</p>
+        <p className="text-[14px] font-medium text-ink">{t("editor.runs.none")}</p>
         <p className="mt-1 text-[13px] text-muted">
-          Press Run and the history lands here.
+          {t("editor.runs.noneHint")}
         </p>
       </div>
     );
@@ -133,16 +136,16 @@ export function RunsPanel({
               type="button"
               onClick={() => expand(r.id)}
               aria-expanded={expanded}
-              className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-ink/[0.04]"
+              className="flex w-full items-center gap-3 px-4 py-3 text-start transition-colors hover:bg-ink/[0.04]"
             >
               <span className={`h-2 w-2 shrink-0 rounded-full ${tone}`} aria-hidden />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] font-medium text-ink">
-                  {TRIGGER[r.trigger] ?? r.trigger}
+                  {TRIGGER[r.trigger] ? t(TRIGGER[r.trigger]) : r.trigger}
                 </span>
                 <span className="block truncate text-[12px] text-muted">
-                  {fmtCost(r.totalCostUsd)} / {fmtDur(r.durationMs)} /{" "}
-                  {r.totalTokens.toLocaleString()} tokens
+                  <bdi>{fmtCost(r.totalCostUsd)}</bdi> / <bdi>{dur(r.durationMs)}</bdi> /{" "}
+                  {tn("editor.runs.tokens", r.totalTokens)}
                 </span>
               </span>
               <span className="shrink-0 text-[12px] text-faint">
@@ -158,22 +161,22 @@ export function RunsPanel({
             {expanded && (
               <div className="border-t border-line/70 bg-sunken/50 px-4 py-3">
                 {r.error && (
-                  <p className="mb-2 text-[12px] leading-snug text-err">{r.error}</p>
+                  <p dir="auto" className="mb-2 text-[12px] leading-snug text-err">{r.error}</p>
                 )}
                 {nodeState[r.id] === "err" ? (
-                  <p className="text-[12px] text-err">Couldn’t load node breakdown.</p>
+                  <p className="text-[12px] text-err">{t("editor.runs.nodeFailed")}</p>
                 ) : (nodes[r.id] ?? []).length ? (
                   <table className="w-full text-[11.5px] text-muted">
                     <thead>
-                      <tr className="text-left text-faint">
+                      <tr className="text-start text-faint">
                         <th scope="col" className="pb-1.5 font-medium">
-                          Node
+                          {t("editor.runs.node")}
                         </th>
-                        <th scope="col" className="pb-1.5 text-right font-medium">
-                          Cost
+                        <th scope="col" className="pb-1.5 text-end font-medium">
+                          {t("editor.runs.cost")}
                         </th>
-                        <th scope="col" className="pb-1.5 text-right font-medium">
-                          Time
+                        <th scope="col" className="pb-1.5 text-end font-medium">
+                          {t("editor.runs.time")}
                         </th>
                       </tr>
                     </thead>
@@ -190,16 +193,16 @@ export function RunsPanel({
                           }
                         >
                           <td className="max-w-36 truncate py-0.5" title={n.model ?? ""}>
-                            {n.nodeId}
+                            <bdi>{n.nodeId}</bdi>
                           </td>
-                          <td className="text-right">{fmtCost(n.costUsd)}</td>
-                          <td className="text-right">{fmtDur(n.durationMs)}</td>
+                          <td className="text-end">{fmtCost(n.costUsd)}</td>
+                          <td className="text-end">{dur(n.durationMs)}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 ) : (
-                  <p className="text-[12px] text-faint">Loading…</p>
+                  <p className="text-[12px] text-faint">{t("common.loading")}</p>
                 )}
               </div>
             )}

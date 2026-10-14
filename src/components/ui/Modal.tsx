@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef } from "react";
 import { X } from "@phosphor-icons/react";
+import { useI18n } from "@/lib/i18n";
 
 /**
  * Accessible dialog shell: role="dialog", labelled by its title, closes on
@@ -23,6 +24,7 @@ export function Modal({
   footer?: React.ReactNode;
   children?: React.ReactNode;
 }) {
+  const { t } = useI18n();
   const titleId = useId();
   const panel = useRef<HTMLDivElement>(null);
 
@@ -49,7 +51,7 @@ export function Modal({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <button
         type="button"
-        aria-label="Close dialog"
+        aria-label={t("shell.modal.closeDialog")}
         tabIndex={-1}
         onClick={() => dismissible && onClose()}
         className="absolute inset-0 cursor-default bg-black/60 backdrop-blur-sm"
@@ -78,8 +80,8 @@ export function Modal({
               type="button"
               data-modal-close
               onClick={onClose}
-              aria-label="Close"
-              className="-mr-2 -mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-faint transition-colors hover:bg-ink/8 hover:text-ink"
+              aria-label={t("common.close")}
+              className="-me-2 -mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-faint transition-colors hover:bg-ink/8 hover:text-ink"
             >
               <X size={14} weight="bold" aria-hidden />
             </button>

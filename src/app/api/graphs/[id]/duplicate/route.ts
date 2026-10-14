@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { assertCanCreateProject } from "@/lib/limits";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { graphs } from "@/db/schema";
@@ -25,6 +26,7 @@ export async function POST(
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
     const portable = toPortable(g.graph as GraphDoc, { title: g.title });
+    await assertCanCreateProject(actor.org.id, actor.org.plan);
     const next = newId();
     const [row] = await db
       .insert(graphs)

@@ -15,6 +15,7 @@ async function processRunJob(runId: string, orgId: string) {
   const input = (run.input ?? {}) as {
     from?: string;
     only?: string;
+    nodes?: string[];
     cached?: Record<string, NodeOutput[]>;
   };
   await db
@@ -40,6 +41,7 @@ async function processRunJob(runId: string, orgId: string) {
       runId,
       only: input.only,
       from: input.from,
+      nodes: input.nodes,
       cached: input.cached,
       signal: ac.signal,
     })) {

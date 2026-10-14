@@ -15,6 +15,9 @@ import {
 } from "./artifacts";
 import { ensurePlayableAudio } from "./audio";
 import { resolveProvider } from "./providers";
+import { ProviderHttpError, withRetry } from "./provider-errors";
+import { DEFAULT_TEXT_MODEL } from "./models";
+import { firstVoiceFor, needsVoice, speechCostUsd } from "./speech-voices";
 import { isModelEnabled, applyMargin } from "./model-policy";
 import {
   requireAspect,
@@ -32,14 +35,17 @@ import { getSkill, type SkillRecord } from "./skills";
 export const DEFAULT_PROVIDER = "openrouter";
 
 const DEFAULTS: Record<string, { provider: string; model: string }> = {
-  llm: { provider: "openrouter", model: "stealth/ox-alpha" },
+  llm: { provider: "openrouter", model: DEFAULT_TEXT_MODEL },
   "image.gen": {
     provider: "openrouter",
     model: "bytedance-seed/seedream-5-0-lite",
   },
-  tts: { provider: "openrouter", model: "openai/gpt-audio-mini" },
+  tts: { provider: "openrouter", model: "minimax/speech-2.8-turbo" },
   "video.gen": { provider: "openrouter", model: "bytedance/seedance-2.5" },
 };
+
+const mediaTypeOf = (v: unknown): "image" | "audio" | "video" | undefined =>
+  v === "image" || v === "audio" || v === "video" ? v : undefined;
 
 export const modelFor = (d: NodeData) =>
   d.model || DEFAULTS[d.kind]?.model || "";
@@ -134,8 +140,15 @@ export async function runNode(
 ): Promise<NodeResult> {
   switch (data.kind) {
     case "text":
-    case "note":
+    case "note": {
+      // A Text node upgraded from a Skill node may hold only the skill id.
+      if (!data.text?.trim() && data.skillId) {
+        const skill = await skillFor(data, ctx.orgId);
+        if (skill?.instructions)
+          return { outputs: [{ type: "text", text: skill.instructions }] };
+      }
       return { outputs: [{ type: "text", text: data.text ?? "" }] };
+    }
 
     case "skill": {
       if (data.text?.trim()) {
@@ -144,6 +157,16 @@ export async function runNode(
       const skill = await skillFor(data, ctx.orgId);
       return {
         outputs: [{ type: "text", text: skill?.instructions ?? "" }],
+      };
+    }
+
+    case "file.in": {
+      if (!data.artifactId) return { outputs: [] };
+      const kind = mediaTypeOf(data.mediaType) ?? "image";
+      return {
+        outputs: [
+          { type: kind, artifactId: data.artifactId, url: `/api/media/${data.artifactId}` },
+        ],
       };
     }
 
@@ -249,13 +272,17 @@ export async function runNode(
       const size = requireSize(data.size);
       const aspectRatio = size ? undefined : requireAspect(data.aspectRatio);
 
-      const generated = await generateImage({
-        model: p.gw.imageModel(model) as unknown as ImageModel,
-        prompt: images.length ? { text, images } : text,
-        maxRetries: 0,
-        ...(size ? { size } : {}),
-        ...(aspectRatio ? { aspectRatio } : {}),
-      });
+      // The SDK's own retries stay off: withRetry re-sends only on failures
+      // that never returned an image, so a retry can't bill twice.
+      const generated = await withRetry(() =>
+        generateImage({
+          model: p.gw.imageModel(model) as unknown as ImageModel,
+          prompt: images.length ? { text, images } : text,
+          maxRetries: 0,
+          ...(size ? { size } : {}),
+          ...(aspectRatio ? { aspectRatio } : {}),
+        }),
+      );
       const image = generated.image;
       const art = await saveArtifact(
         image.uint8Array,
@@ -283,24 +310,36 @@ export async function runNode(
         throw new Error(`Model "${model}" is disabled by the administrator.`);
       const p = resolveProvider();
       const voice = resolveVoice(model, data.voice);
-      const res = await fetch(`${p.baseUrl.replace(/\/$/, "")}/audio/speech`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${p.apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model,
-          input: prompt.slice(0, 4000),
-          response_format: "mp3",
-          ...(voice ? { voice } : {}),
-        }),
+      const speak = (voiceId?: string) => withRetry(async () => {
+        const r = await fetch(`${p.baseUrl.replace(/\/$/, "")}/audio/speech`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${p.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model,
+            input: prompt.slice(0, 4000),
+            response_format: "mp3",
+            ...(voiceId ? { voice: voiceId } : {}),
+          }),
+        });
+        if (!r.ok) {
+          throw new ProviderHttpError(
+            `TTS failed (${r.status}): ${(await r.text()).slice(0, 300)}`,
+            r.status,
+          );
+        }
+        return r;
       });
-      if (!res.ok) {
-        throw new Error(
-          `TTS failed (${res.status}): ${(await res.text()).slice(0, 300)}`,
-        );
-      }
+      // Auto means "send no voice"; a model that insists on one gets its first.
+      const res = await speak(voice).catch(async (e) => {
+        if (voice || !(e instanceof ProviderHttpError) || !needsVoice(e.status, e.message))
+          throw e;
+        const fallback = await firstVoiceFor(p.baseUrl, model).catch(() => undefined);
+        if (!fallback) throw e;
+        return speak(fallback);
+      });
       const buf = new Uint8Array(await res.arrayBuffer());
       const mime = res.headers.get("content-type") || "audio/mpeg";
       if (mime.includes("json") || mime.includes("application/json"))
@@ -314,6 +353,13 @@ export async function runNode(
         ctx.orgId ?? "",
       );
       const headerCost = Number(res.headers.get("x-openrouter-cost") || "");
+      // No cost header: price it from the catalog's per-character rate, so the
+      // platform's spend is recorded rather than billed as zero.
+      const spoken = prompt.slice(0, 4000);
+      const rateCost =
+        Number.isFinite(headerCost) && headerCost > 0
+          ? undefined
+          : await speechCostUsd(p.baseUrl, model, spoken.length).catch(() => undefined);
       return {
         outputs: [
           { type: "audio", artifactId: art.id, url: `/api/media/${art.id}` },
@@ -321,7 +367,7 @@ export async function runNode(
         usage: await applyMargin(model, {
           model,
           costUsd:
-            Number.isFinite(headerCost) && headerCost > 0 ? headerCost : undefined,
+            Number.isFinite(headerCost) && headerCost > 0 ? headerCost : rateCost,
         }),
       };
     }
@@ -351,7 +397,7 @@ export async function runNode(
       const resolution = requireSize(data.resolution, "resolution");
       const duration = requireDuration(data.duration);
 
-      const generated = await experimental_generateVideo({
+      const generated = await withRetry(() => experimental_generateVideo({
         model: p.gw.videoModel(model),
         prompt: prompt || "",
         frameImages,
@@ -377,7 +423,7 @@ export async function runNode(
             mediaType: mime.includes("video") ? mime : "video/mp4",
           };
         },
-      });
+      }), { tries: 2 });
       const v = generated.videos[0];
       if (!v) throw new Error("Video generation returned no videos");
       const art = await saveArtifact(
@@ -396,8 +442,9 @@ export async function runNode(
     }
 
     case "out.text": {
-      const t = (inputs.in ?? []).find((o) => o.type === "text");
-      return { outputs: t ? [t] : [] };
+      // The one Output node: passes along everything that arrived, on its
+      // single input or on a handle an older graph used.
+      return { outputs: Object.values(inputs).flat() };
     }
 
     case "out.media": {

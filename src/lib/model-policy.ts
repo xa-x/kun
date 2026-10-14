@@ -20,6 +20,8 @@ export interface ModelPolicyRow {
   pricePerUsd: number | null;
   /** Markup percentage applied on top of the cost basis (0 = pass-through). */
   marginPct: number;
+  /** Suggestion order from the dashboard; null = not pinned. */
+  pinRank: number | null;
   updatedAt?: Date;
 }
 
@@ -37,6 +39,7 @@ export async function policyMap(): Promise<Map<string, ModelPolicyRow>> {
       enabled: !!r.enabled,
       pricePerUsd: r.pricePerUsd == null ? null : r.pricePerUsd / 1e6,
       marginPct: r.marginPct,
+      pinRank: r.pinRank ?? null,
       updatedAt: r.updatedAt,
     });
   }
@@ -66,17 +69,23 @@ export async function enabledModels(): Promise<Set<string> | null> {
 /**
  * Billed USD for a model given the provider-reported cost. Applies the
  * admin price override first (it replaces the cost basis), then the margin
- * percentage. Missing policy or missing cost passes through untouched.
+ * percentage. Missing policy passes through untouched.
+ *
+ * Some providers report no cost at all (image generation on OpenRouter does
+ * not). Without a configured price that bills as free while the platform still
+ * pays, so a price set for such a model acts as its flat per-call price.
  */
 export async function billableCostUsd(
   model: string | undefined,
   costUsd: number | undefined,
 ): Promise<number | undefined> {
-  if (!model || costUsd == null || !Number.isFinite(costUsd)) return costUsd;
+  if (!model) return costUsd;
+  if (costUsd != null && !Number.isFinite(costUsd)) return costUsd;
   const map = await policyMap();
   const row = map.get(model);
   if (!row) return costUsd;
   const basis = row.pricePerUsd ?? costUsd;
+  if (basis == null) return undefined; // nothing reported, nothing configured
   return basis * (1 + row.marginPct / 100);
 }
 
@@ -97,6 +106,7 @@ export async function setModelPolicy(input: {
   enabled?: boolean;
   pricePerUsd?: number | null;
   marginPct?: number;
+  pinRank?: number | null;
 }) {
   const [existing] = await db
     .select()
@@ -111,13 +121,14 @@ export async function setModelPolicy(input: {
         ? null
         : Math.round(input.pricePerUsd * 1e6);
   const marginPct = input.marginPct ?? existing?.marginPct ?? 0;
+  const pinRank = input.pinRank === undefined ? (existing?.pinRank ?? null) : input.pinRank;
   if (existing) {
     await db
       .update(modelPolicy)
-      .set({ enabled, pricePerUsd, marginPct, updatedAt: new Date() })
+      .set({ enabled, pricePerUsd, marginPct, pinRank, updatedAt: new Date() })
       .where(eq(modelPolicy.model, input.model));
   } else {
-    await db.insert(modelPolicy).values({ model: input.model, enabled, pricePerUsd, marginPct });
+    await db.insert(modelPolicy).values({ model: input.model, enabled, pricePerUsd, marginPct, pinRank });
   }
   invalidatePolicyCache();
 }
