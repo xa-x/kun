@@ -6,6 +6,8 @@ import { fail, requireActor } from "@/lib/auth";
 import { canEdit } from "@/lib/tenant";
 import { planOf } from "@/lib/billing";
 import { newId, newToken } from "@/lib/ids";
+import { publishDoc } from "@/lib/publish";
+import type { GraphDoc } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -28,7 +30,8 @@ export async function GET(
       webhooks: rows.map((w) => ({
         id: w.id,
         token: w.token,
-        secret: w.secret,
+        // The secret signs requests, so only people who can edit may see it.
+        secret: canEdit(actor.membership.role) ? w.secret : null,
         url: `/api/webhooks/${w.token}`,
         enabled: !!w.enabled,
       })),
@@ -57,10 +60,13 @@ export async function POST(
     }
     const token = newToken(16);
     const secret = newToken(20);
-    await db
-      .update(graphs)
-      .set({ publishedGraph: g.graph, updatedAt: new Date() })
-      .where(eq(graphs.id, id));
+    // Webhook runs use the published version; publish now only if there is none.
+    if (!g.publishedGraph) {
+      await db
+        .update(graphs)
+        .set({ publishedGraph: publishDoc(g.graph as GraphDoc) })
+        .where(eq(graphs.id, id));
+    }
     const [row] = await db
       .insert(webhookEndpoints)
       .values({
@@ -86,6 +92,9 @@ export async function DELETE(
 ) {
   try {
     const actor = await requireActor(req);
+    if (!canEdit(actor.membership.role)) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
     const hookId = req.nextUrl.searchParams.get("id");
     const { id } = await params;
     if (!hookId) return NextResponse.json({ error: "id required" }, { status: 400 });

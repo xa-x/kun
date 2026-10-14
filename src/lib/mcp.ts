@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { assertCanCreateProject } from "@/lib/limits";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { graphs, runs, runEvents } from "@/db/schema";
@@ -18,12 +19,12 @@ const setInputs = z.object({
 export const MCP_TOOLS = [
   {
     name: "list_workbooks",
-    description: "List workbooks in the current workspace",
+    description: "List the projects in the current workspace",
     inputSchema: { type: "object", properties: {} },
   },
   {
     name: "get_workbook",
-    description: "Get a workbook document by id",
+    description: "Get a project (its nodes and wires) by id",
     inputSchema: {
       type: "object",
       properties: { graphId: { type: "string" } },
@@ -32,7 +33,7 @@ export const MCP_TOOLS = [
   },
   {
     name: "create_workbook",
-    description: "Create a workbook. mode=blank|starter",
+    description: "Create a project. mode=blank|starter",
     inputSchema: {
       type: "object",
       properties: {
@@ -43,7 +44,7 @@ export const MCP_TOOLS = [
   },
   {
     name: "fork_workbook",
-    description: "Duplicate a workbook",
+    description: "Duplicate a project",
     inputSchema: {
       type: "object",
       properties: { graphId: { type: "string" }, title: { type: "string" } },
@@ -118,6 +119,7 @@ export async function callMcpTool(
     }
     case "create_workbook": {
       if (!canEdit(actor.membership.role)) throw new Error("Forbidden");
+      await assertCanCreateProject(orgId, actor.org.plan);
       const id = newId();
       const mode = args.mode === "blank" ? emptyGraph() : starterGraph();
       await db.insert(graphs).values({
@@ -134,6 +136,7 @@ export async function callMcpTool(
       const id = String(args.graphId ?? "");
       const [g] = await db.select().from(graphs).where(eq(graphs.id, id)).limit(1);
       if (!g || g.orgId !== orgId) throw new Error("Workbook not found");
+      await assertCanCreateProject(orgId, actor.org.plan);
       const next = newId();
       const portable = toPortable(g.graph as GraphDoc, { title: g.title });
       await db.insert(graphs).values({

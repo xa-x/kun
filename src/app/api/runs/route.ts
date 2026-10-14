@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const graphId = typeof body.graphId === "string" ? body.graphId : "";
     if (!graphId) return NextResponse.json({ error: "graphId required" }, { status: 400 });
-    const { run } = await enqueueRun(
+    const { run, inputs } = await enqueueRun(
       {
         orgId: actor.org.id,
         userId: actor.user.id,
@@ -76,13 +76,23 @@ export async function POST(req: NextRequest) {
         trigger: body.trigger === "api" ? "api" : "manual",
         only: typeof body.only === "string" ? body.only : undefined,
         from: typeof body.from === "string" ? body.from : undefined,
+        nodes: Array.isArray(body.nodes)
+          ? body.nodes.filter((id: unknown): id is string => typeof id === "string").slice(0, 200)
+          : undefined,
         cached: body.cached as Record<string, NodeOutput[]> | undefined,
         graphOverride: body.graph as GraphDoc | undefined,
         idempotencyKey: typeof body.idempotencyKey === "string" ? body.idempotencyKey : undefined,
+        // Values for the project's Text nodes, by name: {"Article": "…"}.
+        input:
+          body.input && typeof body.input === "object" && !Array.isArray(body.input)
+            ? (body.input as Record<string, unknown>)
+            : undefined,
+        // Outside callers get the live version, like schedules and webhooks.
+        published: actor.via === "api_key",
       },
       actor.org.plan,
     );
-    return NextResponse.json({ runId: run.id, status: run.status }, { status: 202 });
+    return NextResponse.json({ runId: run.id, status: run.status, inputs }, { status: 202 });
   } catch (e) {
     if (e instanceof PlanLimitError) {
       return NextResponse.json({ error: e.message }, { status: 402 });

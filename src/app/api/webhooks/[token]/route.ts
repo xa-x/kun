@@ -56,13 +56,17 @@ export async function POST(
     .where(eq(organizations.id, hook.orgId))
     .limit(1);
   try {
-    const { run } = await enqueueRun(
+    // The body fills the project's Text nodes by name; the idempotency key is
+    // for us, not the project.
+    const { idempotencyKey: _k, ...values } = body;
+    void _k;
+    const { run, inputs } = await enqueueRun(
       {
         orgId: hook.orgId,
         graphId: hook.graphId,
         trigger: "webhook",
         published: true,
-        input: body,
+        input: values,
         idempotencyKey:
           typeof body.idempotencyKey === "string"
             ? body.idempotencyKey
@@ -70,7 +74,10 @@ export async function POST(
       },
       org?.plan ?? "free",
     );
-    return NextResponse.json({ runId: run.id, status: run.status }, { status: 202 });
+    return NextResponse.json(
+      { runId: run.id, status: run.status, inputs },
+      { status: 202 },
+    );
   } catch (e) {
     if (e instanceof PlanLimitError) {
       return NextResponse.json({ error: e.message }, { status: 402 });
