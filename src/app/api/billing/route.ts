@@ -3,7 +3,8 @@ import { and, eq, gte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { organizations, runs, usageLedger } from "@/db/schema";
 import { fail, requireActor } from "@/lib/auth";
-import { monthStart, PLANS, planOf, TOPUP_AMOUNTS_USD } from "@/lib/billing";
+import { allowance, monthStart, PLANS, planOf, TOPUP_AMOUNTS_USD } from "@/lib/billing";
+import { memberCount } from "@/lib/limits";
 
 export const runtime = "nodejs";
 
@@ -11,6 +12,7 @@ export async function GET(req: NextRequest) {
   try {
     const actor = await requireActor(req);
     const plan = planOf(actor.org.plan);
+    const allow = allowance(plan, await memberCount(actor.org.id));
     const since = new Date(monthStart());
     const [runCount] = await db
       .select({ n: sql<number>`count(*)` })
@@ -36,11 +38,11 @@ export async function GET(req: NextRequest) {
       topupAmountsUsd: TOPUP_AMOUNTS_USD,
       usage: {
         runs: Number(runCount?.n ?? 0),
-        runLimit: plan.monthlyRuns,
+        runLimit: allow.runs,
         amountUsd: Number(spend?.usd ?? 0),
         tokens: Number(spend?.tokens ?? 0),
         includedUsd: Number(spend?.usd ?? 0) - Number(spend?.fromBalance ?? 0),
-        creditAllowanceUsd: plan.monthlyCreditsUsd,
+        creditAllowanceUsd: allow.creditsUsd,
         balanceUsd: org?.balance ?? 0,
       },
     });

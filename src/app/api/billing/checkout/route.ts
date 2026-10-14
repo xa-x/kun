@@ -5,7 +5,7 @@ import { memberships, organizations } from "@/db/schema";
 import { fail, requireActor } from "@/lib/auth";
 import { canAdmin } from "@/lib/tenant";
 import { isPlatformAdmin } from "@/lib/admin";
-import { planOf, PLANS, type PlanId } from "@/lib/billing";
+import { planOf, PLANS, type PlanId, billedSeats } from "@/lib/billing";
 import {
   createPlanCheckout,
   createPortalUrl,
@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
             email: actor.user.email,
             plan: planId as PlanId,
             productId,
-            seats: planOf(planId).seatUsd ? Math.max(1, Number(seats?.n ?? 1)) : undefined,
+            seats: planOf(planId).seatUsd ? billedSeats(planOf(planId), Number(seats?.n ?? 1)) : undefined,
           }),
         });
       }

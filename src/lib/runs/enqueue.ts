@@ -1,10 +1,14 @@
 import { and, eq, gte, sql } from "drizzle-orm";
+import { platform } from "../platform";
+import { isSuspended } from "../workspace-settings";
 import { db } from "@/db";
 import { graphs, organizations, runs, usageLedger } from "@/db/schema";
-import { monthStart, planOf, PlanLimitError, splitCharge } from "../billing";
+import { allowance, monthStart, planOf, PlanLimitError, splitCharge } from "../billing";
+import { memberCount } from "../limits";
 import { enqueueJob } from "../jobs";
 import { newId } from "../ids";
 import { snapshotWorkbook } from "../versions";
+import { applyRunInputs } from "../run-inputs";
 import type { GraphDoc, NodeOutput } from "../types";
 
 export type RunTrigger = "manual" | "node" | "schedule" | "webhook" | "api" | "mcp";
@@ -15,6 +19,8 @@ export interface EnqueueInput {
   graphId: string;
   trigger: RunTrigger;
   only?: string;
+  /** Run exactly these nodes: a group, run apart from the rest. */
+  nodes?: string[];
   from?: string;
   cached?: Record<string, NodeOutput[]>;
   input?: Record<string, unknown>;
@@ -58,8 +64,9 @@ export async function includedSpendMicroUsd(
  */
 export async function assertWithinCredits(orgId: string, planId: string) {
   const plan = planOf(planId);
+  const credits = allowance(plan, await memberCount(orgId)).creditsUsd;
   const spent = await includedSpendMicroUsd(orgId);
-  if (spent < plan.monthlyCreditsUsd * 1e6) return;
+  if (spent < credits * 1e6) return;
   const [org] = await db
     .select({ balance: organizations.creditBalance })
     .from(organizations)
@@ -67,7 +74,7 @@ export async function assertWithinCredits(orgId: string, planId: string) {
     .limit(1);
   if ((org?.balance ?? 0) > 0) return;
   throw new PlanLimitError(
-    `This workspace used its $${plan.monthlyCreditsUsd} of included model credits for the month. ` +
+    `This workspace used its $${credits} of included model credits for the month. ` +
       (plan.topups
         ? "Add credits in Billing to keep running."
         : "Upgrade to Pro to add more."),
@@ -76,6 +83,18 @@ export async function assertWithinCredits(orgId: string, planId: string) {
 
 export async function enqueueRun(input: EnqueueInput, planId: string) {
   const plan = planOf(planId);
+  const maintenance = (await platform()).maintenance;
+  if (maintenance.on) {
+    throw Object.assign(new Error(maintenance.message), { status: 503 });
+  }
+  const [org] = await db
+    .select({ settings: organizations.settings })
+    .from(organizations)
+    .where(eq(organizations.id, input.orgId))
+    .limit(1);
+  if (isSuspended(org?.settings)) {
+    throw Object.assign(new Error("This workspace is suspended. Contact support to restore it."), { status: 403 });
+  }
   if (input.trigger === "schedule" && !plan.schedules) {
     throw new PlanLimitError("Schedules are available on Pro and Team.");
   }
@@ -86,10 +105,9 @@ export async function enqueueRun(input: EnqueueInput, planId: string) {
     throw new PlanLimitError("MCP is available on Pro and Team.");
   }
   const used = await countMonthlyRuns(input.orgId);
-  if (used >= plan.monthlyRuns) {
-    throw new PlanLimitError(
-      `This workspace reached its ${plan.monthlyRuns} monthly run limit.`,
-    );
+  const runLimit = allowance(plan, await memberCount(input.orgId)).runs;
+  if (used >= runLimit) {
+    throw new PlanLimitError(`This workspace reached its ${runLimit} monthly run limit.`);
   }
   await assertWithinCredits(input.orgId, planId);
 
@@ -113,14 +131,17 @@ export async function enqueueRun(input: EnqueueInput, planId: string) {
     .where(eq(graphs.id, input.graphId))
     .limit(1);
   if (!graph || graph.orgId !== input.orgId) {
-    throw Object.assign(new Error("Workbook not found"), { status: 404 });
+    throw Object.assign(new Error("Project not found"), { status: 404 });
   }
 
-  const snapshot =
+  const base =
     input.graphOverride ??
     (input.published && graph.publishedGraph
       ? (graph.publishedGraph as GraphDoc)
       : (graph.graph as GraphDoc));
+  // Values sent with the run (a webhook body, a schedule's inputs, an API
+  // call) fill the project's Text nodes for this run only.
+  const { doc: snapshot, applied, ignored } = applyRunInputs(base, input.input);
 
   if (plan.versions && input.trigger === "manual") {
     await snapshotWorkbook(input.orgId, input.graphId, snapshot, "run", input.userId);
@@ -134,12 +155,16 @@ export async function enqueueRun(input: EnqueueInput, planId: string) {
       orgId: input.orgId,
       graphId: input.graphId,
       status: "queued",
-      trigger: input.trigger === "node" || input.only || input.from ? "node" : input.trigger,
-      only: input.only ?? input.from ?? null,
+      trigger:
+        input.trigger === "node" || input.only || input.from || input.nodes?.length
+          ? "node"
+          : input.trigger,
+      only: input.only ?? input.from ?? (input.nodes?.length ? "group" : null),
       snapshot,
       input: {
         from: input.from,
         only: input.only,
+        nodes: input.nodes,
         cached: input.cached ?? {},
         extra: input.input ?? {},
       },
@@ -150,13 +175,13 @@ export async function enqueueRun(input: EnqueueInput, planId: string) {
 
   await enqueueJob(input.orgId, "run", { runId });
   void import("./worker").then((m) => m.tickJobs());
-  return { run: run!, reused: false };
+  return { run: run!, reused: false, inputs: { applied, ignored } };
 }
 
 export async function recordUsage(opts: {
   orgId: string;
   runId?: string;
-  /** What spent it: a workbook run, or a model call outside one. */
+  /** What spent it: a project run, or a model call outside one. */
   kind?: "run" | "assistant" | "skill";
   amountUsd: number;
   tokens: number;
@@ -172,7 +197,7 @@ export async function recordUsage(opts: {
       .limit(1)
       .for("update");
     const includedLeft =
-      planOf(org?.plan).monthlyCreditsUsd * 1e6 -
+      allowance(planOf(org?.plan), await memberCount(opts.orgId)).creditsUsd * 1e6 -
       (await includedSpendMicroUsd(opts.orgId, tx));
     const { fromBalance } = splitCharge(opts.amountUsd, includedLeft, org?.balance ?? 0);
     if (fromBalance) {
