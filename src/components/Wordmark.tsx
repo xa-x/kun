@@ -1,27 +1,24 @@
 /**
- * Brand mark: three nodes joined by two wires, each node in the colour of a
- * data type. Paired with كُن ("Be!") set in Kufic.
+ * Brand mark: the letter nun (ن) from كُن ("Be!"), a bold bowl with the
+ * spark where its dot sits — the thing spoken into being.
  */
-export function Logomark({ size = 18 }: { size?: number }) {
+export function Logomark({ size = 22 }: { size?: number }) {
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 18 18"
+      viewBox="0 0 24 24"
       fill="none"
       aria-hidden
       className="shrink-0"
     >
       <path
-        d="M6.2 8.2 11.7 5M6.2 9.8l5.5 3.2"
+        d="M4.5 11.5C4.5 17 8 19.2 12 19.2C16.2 19.2 18.8 16.6 18.8 10"
         stroke="currentColor"
-        strokeOpacity="0.4"
-        strokeWidth="1.3"
+        strokeWidth="3"
         strokeLinecap="round"
       />
-      <circle cx="4.2" cy="9" r="2.6" fill="var(--color-t-text)" />
-      <circle cx="13.8" cy="4.4" r="2.6" fill="var(--color-t-image)" />
-      <circle cx="13.8" cy="13.6" r="2.6" fill="var(--color-t-video)" />
+      <circle cx="11.8" cy="5.2" r="2.6" fill="var(--color-t-image)" />
     </svg>
   );
 }
@@ -29,20 +26,17 @@ export function Logomark({ size = 18 }: { size?: number }) {
 export function Wordmark({ compact = false }: { compact?: boolean }) {
   return (
     <span className="flex items-center gap-2.5 text-ink" title="كُن · Kun">
-      <Logomark />
+      <Logomark size={24} />
       {!compact && (
-        <span className="flex items-baseline gap-1.5">
-          <span
-            lang="ar"
-            dir="rtl"
-            className="font-arabic text-[17px] font-bold leading-none"
-          >
+        <>
+          {/* Arabic readers get the name as written, with its vowel marks. */}
+          <span className="text-[17px] font-semibold leading-none tracking-[-0.01em] [html[dir=rtl]_&]:hidden">
+            Kun
+          </span>
+          <span className="hidden font-[family-name:var(--font-kufi)] text-[21px] font-semibold leading-none [html[dir=rtl]_&]:inline">
             كُن
           </span>
-          <span className="text-[11px] font-semibold tracking-[0.08em] text-muted">
-            KUN
-          </span>
-        </span>
+        </>
       )}
     </span>
   );
