@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { workspaceSettings } from "@/lib/workspace-settings";
 import { desc, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { graphs, templates } from "@/db/schema";
+import { communityEvents, graphs, templates } from "@/db/schema";
+import { coverOf, pickShowcaseMedia } from "@/lib/community";
 import { fail, requireActor } from "@/lib/auth";
 import { canEdit } from "@/lib/tenant";
 import { newId } from "@/lib/ids";
@@ -47,13 +49,19 @@ export async function POST(req: NextRequest) {
     if (!canEdit(actor.membership.role)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+    if (!workspaceSettings(actor.org.settings).allowCommunityPublish) {
+      return NextResponse.json(
+        { error: "Publishing to the Community is turned off for this workspace. An admin can allow it in Settings, under Privacy." },
+        { status: 403 },
+      );
+    }
     const body = await req.json().catch(() => ({}));
     const graphId = typeof body.graphId === "string" ? body.graphId : "";
     const [g] = graphId
       ? await db.select().from(graphs).where(eq(graphs.id, graphId)).limit(1)
       : [];
     if (!g || g.orgId !== actor.org.id) {
-      return NextResponse.json({ error: "Workbook not found" }, { status: 404 });
+      return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
     const doc = g.graph as GraphDoc;
     const skills = await collectSkillsForDoc(actor.org.id, skillIdsIn(doc));
@@ -63,6 +71,8 @@ export async function POST(req: NextRequest) {
         : toPortable(doc, { title: g.title, skills }),
     );
     const title = normalizeTitle(body.title ?? g.title);
+    // Showcase files are optional: publishing them makes them public.
+    const media = body.includeMedia === false ? [] : pickShowcaseMedia(doc);
     const [row] = await db
       .insert(templates)
       .values({
@@ -74,9 +84,14 @@ export async function POST(req: NextRequest) {
         description: normalizeDescription(body.description),
         tags: normalizeTags(body.tags),
         workbook: pack,
+        media,
+        coverId: coverOf(media)?.id ?? null,
         publishedBy: actor.user.id,
       })
       .returning();
+    await db
+      .insert(communityEvents)
+      .values({ id: newId(), kind: "published", templateId: row.id, userId: actor.user.id });
     return NextResponse.json({ template: publicTemplate(row) }, { status: 201 });
   } catch (e) {
     return fail(e);

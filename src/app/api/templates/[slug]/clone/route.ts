@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { assertCanCreateProject } from "@/lib/limits";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { graphs, templates } from "@/db/schema";
+import { communityEvents, graphs, templates } from "@/db/schema";
 import { fail, requireActor } from "@/lib/auth";
 import { canEdit } from "@/lib/tenant";
 import { newId } from "@/lib/ids";
@@ -23,10 +24,11 @@ export async function POST(
     const [row] = await db.select().from(templates).where(eq(templates.slug, slug)).limit(1);
     if (!row) return NextResponse.json({ error: "not found" }, { status: 404 });
     if (!isPortable(row.workbook)) {
-      return NextResponse.json({ error: "Template is not a valid workbook" }, { status: 500 });
+      return NextResponse.json({ error: "Template is not a valid project" }, { status: 500 });
     }
     await materializePortableSkills(actor.org.id, actor.user.id, row.workbook.skills);
     const doc = remapPortable(row.workbook);
+    await assertCanCreateProject(actor.org.id, actor.org.plan);
     const id = newId();
     const [graph] = await db
       .insert(graphs)
@@ -42,6 +44,9 @@ export async function POST(
       .update(templates)
       .set({ cloneCount: sql`${templates.cloneCount} + 1` })
       .where(eq(templates.id, row.id));
+    await db
+      .insert(communityEvents)
+      .values({ id: newId(), kind: "remixed", templateId: row.id, userId: actor.user.id });
     return NextResponse.json({ graph }, { status: 201 });
   } catch (e) {
     return fail(e);

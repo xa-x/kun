@@ -8,6 +8,7 @@ import * as os from "os";
 import * as path from "path";
 import { newId } from "./ids";
 import { mediaKey, objectStore } from "./storage";
+import { assertStorageFits } from "./limits";
 
 export { newId };
 
@@ -50,6 +51,7 @@ export async function saveArtifact(
   kind: "image" | "audio" | "video",
   runId?: string,
   orgId = "",
+  extra: { source?: "upload" | "generated" | "stock"; meta?: Record<string, unknown> } = {},
 ) {
   if (!buf.byteLength) throw new Error(`Empty ${kind} artifact`);
   if (kind === "video" && looksLikeJson(buf)) {
@@ -57,6 +59,7 @@ export async function saveArtifact(
       `Video download was not a video file: ${new TextDecoder().decode(buf.slice(0, 180))}`,
     );
   }
+  if (orgId) await assertStorageFits(orgId, buf.byteLength);
   const id = newId();
   const mime = sniffMime(buf, mimeType);
   if (kind === "video" && !mime.startsWith("video/")) {
@@ -73,6 +76,8 @@ export async function saveArtifact(
     mimeType: mime,
     bytes: buf.byteLength,
     filename,
+    source: extra.source ?? (runId ? "generated" : "upload"),
+    meta: extra.meta ?? null,
   });
   return { id, filename, mimeType: mime, bytes: buf.byteLength };
 }

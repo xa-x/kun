@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { artifacts, graphs, shares, type ArtifactRow } from "@/db/schema";
+import { artifacts, graphs, shares, templates, type ArtifactRow } from "@/db/schema";
 import { resolveActor } from "@/lib/auth";
 import { objectStore } from "@/lib/storage";
 import { ensurePlayableAudio } from "@/lib/audio";
@@ -9,10 +9,10 @@ import { ensurePlayableAudio } from "@/lib/audio";
 export const runtime = "nodejs";
 
 /**
- * Outside the owning workspace, an artifact is readable only while a workbook
+ * Outside the owning workspace, an artifact is readable only while a project
  * that currently shows it has an active share link — that is exactly what the
  * /s/[token] view renders, uploads and run outputs alike. Older runs of a
- * shared workbook stay private.
+ * shared project stay private.
  */
 async function reachableViaActiveShare(row: ArtifactRow) {
   if (!row.orgId) return false;
@@ -29,6 +29,16 @@ async function reachableViaActiveShare(row: ArtifactRow) {
     )
     .limit(1);
   return Boolean(share);
+}
+
+/** Files a project chose to show in the community are readable by anyone. */
+async function reachableViaCommunity(row: ArtifactRow) {
+  const [hit] = await db
+    .select({ id: templates.id })
+    .from(templates)
+    .where(sql`${templates.media}::text like ${`%"${row.id}"%`}`)
+    .limit(1);
+  return Boolean(hit);
 }
 
 function fileNameOf(filename: string, id: string, mime: string) {
@@ -62,7 +72,7 @@ export async function GET(
   if (!row) return new Response("not found", { status: 404 });
   const actor = await resolveActor(req).catch(() => null);
   const own = Boolean(actor && row.orgId && row.orgId === actor.org.id);
-  if (!own && !(await reachableViaActiveShare(row))) {
+  if (!own && !(await reachableViaActiveShare(row)) && !(await reachableViaCommunity(row))) {
     return actor
       ? new Response("not found", { status: 404 })
       : new Response("unauthorized", { status: 401 });
