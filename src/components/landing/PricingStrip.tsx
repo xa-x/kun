@@ -14,6 +14,7 @@ function summary(id: keyof typeof PLANS) {
   const p = PLANS[id];
   const lines = [`${p.monthlyRuns.toLocaleString()} runs a month`];
   lines.push(`$${p.monthlyCreditsUsd} of model credits`);
+  if (p.topups) lines.push("Top up credits any time");
   if (p.schedules) lines.push("Schedules, webhooks and MCP");
   if (p.team) lines.push("Team workspaces");
   return lines;

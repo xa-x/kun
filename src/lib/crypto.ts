@@ -14,6 +14,11 @@ export function masterKey(): Buffer {
   if (env && env.length >= 16) {
     return crypto.createHash("sha256").update(env).digest();
   }
+  // Workers have no durable disk. A generated file would vanish on the next
+  // request and could never decrypt what the previous one stored.
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("KUN_SECRET is required in production.");
+  }
   const file = path.join(dataDir(), "secret");
   if (fs.existsSync(file)) {
     const raw = fs.readFileSync(file, "utf8").trim();

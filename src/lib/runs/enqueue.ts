@@ -1,7 +1,7 @@
 import { and, eq, gte, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { graphs, runs, usageLedger } from "@/db/schema";
-import { monthStart, planOf, PlanLimitError } from "../billing";
+import { graphs, organizations, runs, usageLedger } from "@/db/schema";
+import { monthStart, planOf, PlanLimitError, splitCharge } from "../billing";
 import { enqueueJob } from "../jobs";
 import { newId } from "../ids";
 import { snapshotWorkbook } from "../versions";
@@ -32,11 +32,19 @@ export async function countMonthlyRuns(orgId: string) {
   return Number(rows[0]?.n ?? 0);
 }
 
-/** Billed model usage this month, in micro-dollars (the ledger's unit). */
-export async function monthlySpendMicroUsd(orgId: string) {
+/**
+ * Usage charged to this month's included credits, in micro-dollars (the
+ * ledger's unit) — everything billed minus what the prepaid balance paid.
+ */
+export async function includedSpendMicroUsd(
+  orgId: string,
+  q: Pick<typeof db, "select"> = db,
+) {
   const since = new Date(monthStart());
-  const rows = await db
-    .select({ n: sql<number>`coalesce(sum(${usageLedger.amountUsd}), 0)` })
+  const rows = await q
+    .select({
+      n: sql<number>`coalesce(sum(${usageLedger.amountUsd} - ${usageLedger.balanceUsd}), 0)`,
+    })
     .from(usageLedger)
     .where(and(eq(usageLedger.orgId, orgId), gte(usageLedger.createdAt, since)));
   return Number(rows[0]?.n ?? 0);
@@ -44,17 +52,26 @@ export async function monthlySpendMicroUsd(orgId: string) {
 
 /**
  * Refuse work that spends the platform's model key once the org has used its
- * monthly credits. Checked before a run starts, so the run that crosses the
- * line still finishes — the cap can be overshot by one run.
+ * included monthly credits and has no prepaid balance left. Checked before a
+ * run starts, so the run that crosses the line still finishes — the limit can
+ * be overshot by one run.
  */
 export async function assertWithinCredits(orgId: string, planId: string) {
   const plan = planOf(planId);
-  const spent = await monthlySpendMicroUsd(orgId);
-  if (spent >= plan.monthlyCreditsUsd * 1e6) {
-    throw new PlanLimitError(
-      `This workspace used its $${plan.monthlyCreditsUsd} of model credits for the month.`,
-    );
-  }
+  const spent = await includedSpendMicroUsd(orgId);
+  if (spent < plan.monthlyCreditsUsd * 1e6) return;
+  const [org] = await db
+    .select({ balance: organizations.creditBalance })
+    .from(organizations)
+    .where(eq(organizations.id, orgId))
+    .limit(1);
+  if ((org?.balance ?? 0) > 0) return;
+  throw new PlanLimitError(
+    `This workspace used its $${plan.monthlyCreditsUsd} of included model credits for the month. ` +
+      (plan.topups
+        ? "Add credits in Billing to keep running."
+        : "Upgrade to Pro to add more."),
+  );
 }
 
 export async function enqueueRun(input: EnqueueInput, planId: string) {
@@ -146,14 +163,34 @@ export async function recordUsage(opts: {
   model?: string;
   provider?: string;
 }) {
-  await db.insert(usageLedger).values({
-    id: newId(),
-    orgId: opts.orgId,
-    runId: opts.runId,
-    kind: opts.kind ?? "run",
-    amountUsd: opts.amountUsd,
-    tokens: opts.tokens,
-    model: opts.model,
-    provider: opts.provider,
+  await db.transaction(async (tx) => {
+    // Lock the org row so concurrent charges split against one balance.
+    const [org] = await tx
+      .select({ plan: organizations.plan, balance: organizations.creditBalance })
+      .from(organizations)
+      .where(eq(organizations.id, opts.orgId))
+      .limit(1)
+      .for("update");
+    const includedLeft =
+      planOf(org?.plan).monthlyCreditsUsd * 1e6 -
+      (await includedSpendMicroUsd(opts.orgId, tx));
+    const { fromBalance } = splitCharge(opts.amountUsd, includedLeft, org?.balance ?? 0);
+    if (fromBalance) {
+      await tx
+        .update(organizations)
+        .set({ creditBalance: sql`${organizations.creditBalance} - ${fromBalance}` })
+        .where(eq(organizations.id, opts.orgId));
+    }
+    await tx.insert(usageLedger).values({
+      id: newId(),
+      orgId: opts.orgId,
+      runId: opts.runId,
+      kind: opts.kind ?? "run",
+      amountUsd: opts.amountUsd,
+      balanceUsd: fromBalance,
+      tokens: opts.tokens,
+      model: opts.model,
+      provider: opts.provider,
+    });
   });
 }

@@ -3,6 +3,9 @@
     "supabase": {
       "type": "http",
       "url": "https://mcp.supabase.com/mcp?project_ref=jiazaqpfaqrcdxeysxwx"
+    },
+    "polar": {
+      "url": "https://mcp.polar.sh/mcp/polar-mcp"
     }
   }
 }

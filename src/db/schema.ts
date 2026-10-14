@@ -1,4 +1,4 @@
-import { pgTable, text, integer, boolean, timestamp, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, bigint, boolean, timestamp, jsonb, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 const now = sql`now()`;
@@ -24,6 +24,11 @@ export const organizations = pgTable("organizations", {
   name: text("name").notNull(),
   slug: text("slug").notNull(),
   plan: text("plan").notNull().default("free"), // free|pro|team
+  /** Prepaid model credits in micro-USD; spent after the plan's included credits. */
+  creditBalance: bigint("credit_balance", { mode: "number" }).notNull().default(0),
+  /** Polar customer and subscription behind a paid plan (null when free or granted). */
+  polarCustomerId: text("polar_customer_id"),
+  polarSubscriptionId: text("polar_subscription_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
 });
 
@@ -313,12 +318,33 @@ export const usageLedger = pgTable(
     runId: text("run_id"),
     kind: text("kind").notNull(),
     amountUsd: integer("amount_usd").notNull().default(0),
+    /** Part of amountUsd paid from the prepaid balance rather than included credits. */
+    balanceUsd: integer("balance_usd").notNull().default(0),
     tokens: integer("tokens").notNull().default(0),
     model: text("model"),
     provider: text("provider"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
   },
   (t) => [index("usage_org_idx").on(t.orgId, t.createdAt)],
+);
+
+/** Every credit added to an org's prepaid balance, in micro-USD. */
+export const creditTopups = pgTable(
+  "credit_topups",
+  {
+    id: text("id").primaryKey(),
+    orgId: text("org_id").notNull(),
+    userId: text("user_id"),
+    amountUsd: integer("amount_usd").notNull(),
+    source: text("source").notNull(), // instant|polar
+    /** Polar order id, so a redelivered webhook credits once. */
+    ref: text("ref"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(now),
+  },
+  (t) => [
+    index("topups_org_idx").on(t.orgId, t.createdAt),
+    uniqueIndex("topups_ref_idx").on(t.ref),
+  ],
 );
 
 /** Admin-controlled model policy: enablement, price override, margin. */

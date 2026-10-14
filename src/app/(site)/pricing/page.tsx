@@ -37,8 +37,12 @@ export default function PricingPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ plan }),
       });
-      const j = await readJson<{ error?: string }>(res);
+      const j = await readJson<{ error?: string; url?: string }>(res);
       if (!res.ok) throw new Error(j.error || "Checkout failed");
+      if (j.url) {
+        window.location.assign(j.url);
+        return;
+      }
       toast(`You're on the ${PLANS[plan].label} plan.`, "ok");
       router.push("/billing");
     } catch (e) {
@@ -78,8 +82,8 @@ export default function PricingPage() {
       </div>
 
       <p className="mt-8 max-w-2xl text-[13.5px] leading-relaxed text-faint">
-        Model usage is billed at cost, or covered by the monthly credits on paid
-        plans.
+        Model usage draws on each plan&apos;s monthly credits first. Paid plans
+        can add prepaid credits for anything beyond that; they never expire.
       </p>
     </div>
   );

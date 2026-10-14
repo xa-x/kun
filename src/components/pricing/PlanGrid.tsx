@@ -8,6 +8,7 @@ function features(p: Plan): { label: string; on: boolean }[] {
       label: `$${p.monthlyCreditsUsd} of model credits a month`,
       on: true,
     },
+    { label: "Prepaid credit top-ups that never expire", on: p.topups },
     { label: "Cron schedules and webhooks", on: p.schedules },
     { label: "MCP server and API keys", on: p.mcp },
     { label: "Workbook version history", on: p.versions },

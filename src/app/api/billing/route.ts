@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { runs, usageLedger } from "@/db/schema";
+import { organizations, runs, usageLedger } from "@/db/schema";
 import { fail, requireActor } from "@/lib/auth";
-import { monthStart, PLANS, planOf } from "@/lib/billing";
+import { monthStart, PLANS, planOf, TOPUP_AMOUNTS_USD } from "@/lib/billing";
 
 export const runtime = "nodejs";
 
@@ -19,19 +19,29 @@ export async function GET(req: NextRequest) {
     const [spend] = await db
       .select({
         usd: sql<number>`coalesce(sum(${usageLedger.amountUsd}), 0)`,
+        fromBalance: sql<number>`coalesce(sum(${usageLedger.balanceUsd}), 0)`,
         tokens: sql<number>`coalesce(sum(${usageLedger.tokens}), 0)`,
       })
       .from(usageLedger)
       .where(and(eq(usageLedger.orgId, actor.org.id), gte(usageLedger.createdAt, since)));
+    // Read fresh: the actor's org row may predate a top-up or a charge.
+    const [org] = await db
+      .select({ balance: organizations.creditBalance })
+      .from(organizations)
+      .where(eq(organizations.id, actor.org.id))
+      .limit(1);
     return NextResponse.json({
       plan,
       plans: Object.values(PLANS),
+      topupAmountsUsd: TOPUP_AMOUNTS_USD,
       usage: {
         runs: Number(runCount?.n ?? 0),
         runLimit: plan.monthlyRuns,
         amountUsd: Number(spend?.usd ?? 0),
         tokens: Number(spend?.tokens ?? 0),
+        includedUsd: Number(spend?.usd ?? 0) - Number(spend?.fromBalance ?? 0),
         creditAllowanceUsd: plan.monthlyCreditsUsd,
+        balanceUsd: org?.balance ?? 0,
       },
     });
   } catch (e) {

@@ -74,15 +74,38 @@ Plans are defined in one place, `src/lib/billing.ts`:
 | Pro  | 2,000        | $15                   | yes                                | no   |
 | Team | 10,000       | $40                   | yes                                | yes  |
 
-- Both limits are hard caps, checked in `enqueueRun` before a run starts
-  (manual, API, MCP, schedule and webhook alike). The assistant and skill
-  generator are metered and gated by the credit cap too. The run that crosses the credit
-  line still finishes, so the cap can be overshot by one run.
+- The run limit is a hard cap, checked in `enqueueRun` before a run starts
+  (manual, API, MCP, schedule and webhook alike).
+- Model credits are spent in two steps: the plan's included credits, which
+  reset monthly, then the org's prepaid balance (`organizations.credit_balance`),
+  which Pro and Team top up in $10, $25 or $50 steps and which never expires.
+  Work is refused only when both are empty. The assistant and skill generator
+  are metered and gated the same way. The run that crosses the line still
+  finishes, so the limit can be overshot by one run.
 - Usage is the billed cost: provider cost, then the admin's per-model price
   override and margin (`/admin`, `src/lib/model-policy.ts`). It is written to
-  `usage_ledger` in micro-dollars when a run finishes.
-- There is no payment provider yet. `POST /api/billing/checkout` switches the
-  plan instantly, which in production is limited to `ADMIN_EMAILS`.
+  `usage_ledger` in micro-dollars when a run finishes, along with the share
+  the balance paid.
+- Payments go through [Polar](https://polar.sh) (`src/lib/polar.ts`), a
+  merchant of record. `POST /api/billing/checkout` and `/api/billing/topup`
+  answer with a hosted checkout URL (or the customer portal for an existing
+  subscriber); `POST /api/billing/webhook` then sets the plan or credits the
+  balance. Without `POLAR_ACCESS_TOKEN` both routes apply the change
+  instantly, which in production is limited to `ADMIN_EMAILS`.
+
+### Polar setup
+
+1. Create three products: Pro (monthly, $24), Team (monthly, seat-based,
+   $20 a seat) and Credits (one-time; its price is replaced per checkout).
+   Put their ids in `POLAR_PRODUCT_PRO`, `POLAR_PRODUCT_TEAM` and
+   `POLAR_PRODUCT_CREDITS`.
+2. Create an organization access token with `checkouts:write` and
+   `customer_sessions:write` for `POLAR_ACCESS_TOKEN`.
+3. Add a webhook to `https://<site>/api/billing/webhook` for `order.paid`,
+   `subscription.active`, `subscription.updated` and `subscription.revoked`;
+   its secret is `POLAR_WEBHOOK_SECRET`.
+4. Set `POLAR_SERVER=sandbox` to use Polar's sandbox, and
+   `NEXT_PUBLIC_SITE_URL` so checkout returns to the right host.
 
 ## Access
 
@@ -162,6 +185,8 @@ npm run dev                        # http://localhost:3000
 | `DATABASE_URL` | Supabase Postgres connection string (Settings → Database) |
 | `OPENROUTER_API_KEY` | the platform's model key |
 | `ADMIN_EMAILS` | comma-separated platform admins (`/admin`, plan switching) |
+| `POLAR_ACCESS_TOKEN`, `POLAR_WEBHOOK_SECRET`, `POLAR_PRODUCT_PRO`, `POLAR_PRODUCT_TEAM`, `POLAR_PRODUCT_CREDITS` | Polar payments (optional; see Polar setup) |
+| `POLAR_SERVER` | `sandbox` for Polar's sandbox; defaults to production |
 | `INVITED_EMAILS` | comma-separated emails allowed to join while sign-up is closed |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Cloudflare R2 API token (R2 → Manage API tokens, Object Read & Write on the bucket) |
 | `R2_BUCKET` | media bucket name; defaults to `kun-media` |
