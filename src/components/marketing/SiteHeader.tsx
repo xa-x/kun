@@ -8,11 +8,13 @@ import { Wordmark } from "../Wordmark";
 import { fetchSessionInfo } from "@/lib/session-info";
 import { APP_HOME, SIGN_IN, SIGN_UP } from "@/lib/routes";
 import { SIGNUP_OPEN } from "@/lib/signup-mode";
+import { useI18n, type MessageKey } from "@/lib/i18n";
+import { LanguageSwitcher } from "../LanguageSwitcher";
 
-const LINKS = [
-  { href: "/#how", label: "How it works" },
-  { href: "/templates", label: "Templates" },
-  { href: "/pricing", label: "Pricing" },
+const LINKS: { href: string; label: MessageKey }[] = [
+  { href: "/#how", label: "site.nav.how" },
+  { href: "/community", label: "site.nav.community" },
+  { href: "/pricing", label: "site.nav.pricing" },
 ];
 
 /**
@@ -21,6 +23,7 @@ const LINKS = [
  */
 export function SiteHeader({ signedIn }: { signedIn?: boolean }) {
   const pathname = usePathname();
+  const { t } = useI18n();
   // Open only for the page it was opened on, so navigating closes the menu.
   const [openFor, setOpenFor] = useState<string | null>(null);
   const open = openFor === pathname;
@@ -29,6 +32,22 @@ export function SiteHeader({ signedIn }: { signedIn?: boolean }) {
     setOpenFor(value ? pathname : null);
   };
   const [fetched, setFetched] = useState<boolean | null>(null);
+  // The divider only appears once content scrolls under the header.
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpenFor(null);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
 
   useEffect(() => {
     if (signedIn !== undefined) return;
@@ -42,13 +61,19 @@ export function SiteHeader({ signedIn }: { signedIn?: boolean }) {
   const known = signedIn ?? fetched;
 
   return (
-    <header className="sticky top-0 z-40 border-b border-line/60 bg-canvas/75 backdrop-blur-xl">
+    <header
+      className={`sticky top-0 z-40 border-b backdrop-blur-xl transition-[background-color,border-color] duration-200 ${
+        scrolled || open
+          ? "border-line/70 bg-canvas/85"
+          : "border-transparent bg-canvas/40"
+      }`}
+    >
       <div className="mx-auto flex h-16 w-full max-w-[1440px] items-center gap-8 px-5 md:px-8">
-        <Link href="/" aria-label="Kun home" className="shrink-0">
+        <Link href="/" aria-label={t("site.nav.home")} className="shrink-0">
           <Wordmark />
         </Link>
 
-        <nav aria-label="Primary" className="hidden items-center gap-1 md:flex">
+        <nav aria-label={t("site.nav.primary")} className="hidden items-center gap-1 md:flex">
           {LINKS.map((l) => {
             const active =
               !l.href.includes("#") && pathname.startsWith(l.href);
@@ -63,13 +88,14 @@ export function SiteHeader({ signedIn }: { signedIn?: boolean }) {
                     : "text-muted hover:bg-ink/5 hover:text-ink"
                 }`}
               >
-                {l.label}
+                {t(l.label)}
               </Link>
             );
           })}
         </nav>
 
-        <div className="ml-auto hidden items-center gap-2 md:flex">
+        <div className="ms-auto hidden items-center gap-2 md:flex">
+          <LanguageSwitcher />
           <Actions known={known} />
         </div>
 
@@ -77,8 +103,9 @@ export function SiteHeader({ signedIn }: { signedIn?: boolean }) {
           type="button"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
-          aria-label={open ? "Close menu" : "Open menu"}
-          className="ml-auto flex h-10 w-10 items-center justify-center rounded-full text-muted hover:bg-ink/5 hover:text-ink md:hidden"
+          aria-controls="mobile-menu"
+          aria-label={open ? t("site.nav.closeMenu") : t("site.nav.openMenu")}
+          className="ms-auto flex h-10 w-10 items-center justify-center rounded-full text-muted hover:bg-ink/5 hover:text-ink md:hidden"
         >
           {open ? (
             <X size={18} weight="bold" aria-hidden />
@@ -89,19 +116,20 @@ export function SiteHeader({ signedIn }: { signedIn?: boolean }) {
       </div>
 
       {open && (
-        <div className="kun-pop border-t border-line/60 bg-canvas px-5 pb-5 pt-3 md:hidden">
-          <nav aria-label="Mobile" className="flex flex-col">
+        <div id="mobile-menu" className="kun-pop border-t border-line/60 bg-canvas px-5 pb-5 pt-3 md:hidden">
+          <nav aria-label={t("site.nav.mobile")} className="flex flex-col">
             {LINKS.map((l) => (
               <Link
                 key={l.href}
                 href={l.href}
                 className="rounded-xl px-3 py-3 text-[15px] text-ink hover:bg-ink/5"
               >
-                {l.label}
+                {t(l.label)}
               </Link>
             ))}
           </nav>
           <div className="mt-3 flex flex-col gap-2">
+            <LanguageSwitcher className="!w-full" />
             <Actions known={known} stacked />
           </div>
         </div>
@@ -117,16 +145,17 @@ function Actions({
   known: boolean | null;
   stacked?: boolean;
 }) {
+  const { t } = useI18n();
   const size = stacked ? "h-11 text-[14px]" : "h-10 text-[13.5px]";
   const base = `inline-flex items-center justify-center rounded-full px-5 font-medium ${size}`;
 
   // Reserve the space while the session is unknown so the header never jumps.
-  if (known === null) return <span className={`${base} invisible`}>Sign in</span>;
+  if (known === null) return <span className={`${base} invisible`}>{t("common.signIn")}</span>;
 
   if (known) {
     return (
       <Link href={APP_HOME} className={`kun-btn-primary ${base}`}>
-        Open workbooks
+        {t("site.nav.openProjects")}
       </Link>
     );
   }
@@ -137,14 +166,14 @@ function Actions({
           href={SIGN_IN}
           className={`${base} text-muted transition-colors hover:text-ink`}
         >
-          Sign in
+          {t("common.signIn")}
         </Link>
       )}
       <Link
         href={SIGNUP_OPEN ? SIGN_UP : SIGN_IN}
         className={`kun-btn-primary ${base}`}
       >
-        {SIGNUP_OPEN ? "Get started" : "Sign in"}
+        {SIGNUP_OPEN ? t("site.nav.getStarted") : t("common.signIn")}
       </Link>
     </>
   );

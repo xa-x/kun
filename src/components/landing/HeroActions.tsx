@@ -6,10 +6,11 @@ import { ArrowRight } from "@phosphor-icons/react";
 import { fetchSessionInfo } from "@/lib/session-info";
 import { APP_HOME, SIGN_IN, SIGN_UP } from "@/lib/routes";
 import { SIGNUP_OPEN } from "@/lib/signup-mode";
+import { useI18n } from "@/lib/i18n";
 
 /**
  * Primary and secondary calls to action. The landing page is static, so this
- * island asks the session endpoint and swaps "Sign in" for "Open workbooks".
+ * island asks the session endpoint and swaps "Sign in" for "Open projects".
  * One label per intent across the whole page: sign in / open / browse.
  */
 export function HeroActions({
@@ -17,6 +18,7 @@ export function HeroActions({
 }: {
   tone?: "default" | "onImage";
 }) {
+  const { t } = useI18n();
   const [signedIn, setSignedIn] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -28,10 +30,10 @@ export function HeroActions({
   }, []);
 
   const primary = signedIn
-    ? { href: APP_HOME, label: "Open workbooks" }
+    ? { href: APP_HOME, label: t("site.hero.openProjects") }
     : SIGNUP_OPEN
-      ? { href: SIGN_UP, label: "Start free" }
-      : { href: SIGN_IN, label: "Sign in" };
+      ? { href: SIGN_UP, label: t("site.hero.startFree") }
+      : { href: SIGN_IN, label: t("site.hero.signIn") };
 
   const secondary =
     tone === "onImage"
@@ -48,15 +50,15 @@ export function HeroActions({
         <ArrowRight
           size={15}
           weight="bold"
-          className="transition-transform group-hover:translate-x-0.5"
+          className="rtl-flip transition-transform group-hover:translate-x-0.5 rtl:group-hover:-translate-x-0.5"
           aria-hidden
         />
       </Link>
       <Link
-        href="/templates"
+        href="/community"
         className={`inline-flex h-12 items-center rounded-full px-7 text-[15px] font-medium transition-colors ${secondary}`}
       >
-        Browse templates
+        {t("site.hero.explore")}
       </Link>
     </div>
   );

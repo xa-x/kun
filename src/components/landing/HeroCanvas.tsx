@@ -5,6 +5,7 @@ import Image from "next/image";
 import { LazyMotion, domAnimation, m, useReducedMotion } from "motion/react";
 import { Copy, Play, Trash } from "@phosphor-icons/react";
 import { nodeDef } from "@/lib/nodes";
+import { useI18n } from "@/lib/i18n";
 import { NodeFrame, portPlacements } from "../node/NodeFrame";
 import { PORT_COLOR } from "../node/tokens";
 
@@ -66,6 +67,7 @@ function wirePath(from: Id, to: Id, toPort: string) {
 const SPRING = { type: "spring", stiffness: 90, damping: 18 } as const;
 
 export function HeroCanvas() {
+  const { t } = useI18n();
   const reduce = useReducedMotion();
   const wrap = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState<number | null>(null);
@@ -98,7 +100,8 @@ export function HeroCanvas() {
       <div
         ref={wrap}
         role="img"
-        aria-label="A canvas. A text brief feeds an AI image node, whose picture feeds an AI video node that is rendering. A second branch writes a caption."
+        dir="ltr"
+        aria-label={t("site.hero.canvasAlt")}
         className="relative w-full overflow-hidden"
         style={{ height: STAGE_H * (scale ?? 0.8) }}
       >
@@ -151,13 +154,12 @@ export function HeroCanvas() {
           <m.div className="absolute" style={{ left: 0, top: 168 }} {...enter(0)}>
             <NodeFrame
               def={nodeDef("text")!}
-              label="Brief"
+              label={t("site.hero.node.brief")}
               status="done"
               connected={{ in: new Set(), out: new Set(["out"]) }}
             >
-              <div className="kun-field !h-[92px] overflow-hidden !cursor-default">
-                A lighthouse on a dark headland at dusk. One window lit. Fog
-                rolling over black rock.
+              <div dir="auto" className="kun-field !h-[92px] overflow-hidden !cursor-default">
+                {t("site.hero.node.briefText")}
               </div>
             </NodeFrame>
           </m.div>
@@ -165,7 +167,7 @@ export function HeroCanvas() {
           <m.div className="absolute" style={{ left: 372, top: 0 }} {...enter(1)}>
             <NodeFrame
               def={nodeDef("image.gen")!}
-              label="Hero still"
+              label={t("site.hero.node.still")}
               status="done"
               selected
               connected={{ in: new Set(["prompt"]), out: new Set(["out"]) }}
@@ -173,7 +175,7 @@ export function HeroCanvas() {
                 <div className="kun-node__toolbar">
                   <span className="kun-node__tool" data-tone="run">
                     <Play size={11} weight="fill" />
-                    Run
+                    {t("site.hero.node.run")}
                   </span>
                   <span className="kun-node__tool">
                     <Copy size={13} weight="bold" />
@@ -185,9 +187,8 @@ export function HeroCanvas() {
               }
             >
               <div className="space-y-2">
-                <div className="kun-field !h-[58px] overflow-hidden !cursor-default">
-                  Cinematic photograph, blue hour, long exposure, restrained
-                  palette.
+                <div dir="auto" className="kun-field !h-[58px] overflow-hidden !cursor-default">
+                  {t("site.hero.node.stillPrompt")}
                 </div>
                 <div className="flex gap-1.5">
                   <span className="kun-chip-select">Seedream 5 Lite</span>
@@ -210,14 +211,13 @@ export function HeroCanvas() {
           <m.div className="absolute" style={{ left: 684, top: 170 }} {...enter(2)}>
             <NodeFrame
               def={nodeDef("video.gen")!}
-              label="Slow push-in"
+              label={t("site.hero.node.pushIn")}
               status="running"
               connected={{ in: new Set(["image"]), out: new Set() }}
             >
               <div className="space-y-2">
-                <div className="kun-field !h-[58px] overflow-hidden !cursor-default">
-                  Slow push-in. Fog drifts across the rocks. The window
-                  flickers.
+                <div dir="auto" className="kun-field !h-[58px] overflow-hidden !cursor-default">
+                  {t("site.hero.node.pushInPrompt")}
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   <span className="kun-chip-select">Seedance 2.5</span>
@@ -234,7 +234,7 @@ export function HeroCanvas() {
                   />
                   <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-3 pb-2.5 pt-8">
                     <div className="flex items-center justify-between text-[11px] font-medium text-white/90">
-                      <span>Rendering</span>
+                      <span>{t("site.hero.node.rendering")}</span>
                       <span className="tabular-nums">62%</span>
                     </div>
                     <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/20">
@@ -249,20 +249,19 @@ export function HeroCanvas() {
           <m.div className="absolute" style={{ left: 372, top: 400 }} {...enter(3)}>
             <NodeFrame
               def={nodeDef("llm")!}
-              label="Caption"
+              label={t("site.hero.node.caption")}
               status="done"
               connected={{ in: new Set(["in"]), out: new Set() }}
             >
               <div className="space-y-2">
-                <div className="kun-field !h-[34px] overflow-hidden !cursor-default">
-                  Write a caption for the film.
+                <div dir="auto" className="kun-field !h-[34px] overflow-hidden !cursor-default">
+                  {t("site.hero.node.captionPrompt")}
                 </div>
                 <span className="kun-chip-select inline-block">
-                  Claude Sonnet 4.5
+                  Claude Sonnet 5.5
                 </span>
-                <div className="rounded-xl border border-line bg-sunken px-3 py-2 text-[12px] leading-relaxed text-ink/85">
-                  One window lit against the dark. Dusk on the northern
-                  headland.
+                <div dir="auto" className="rounded-xl border border-line bg-sunken px-3 py-2 text-[12px] leading-relaxed text-ink/85">
+                  {t("site.hero.node.captionOut")}
                 </div>
               </div>
             </NodeFrame>

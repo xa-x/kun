@@ -6,9 +6,11 @@ import { ReactFlowProvider } from "@xyflow/react";
 import { readJson } from "@/lib/http";
 import { StatusScreen } from "./StatusScreen";
 import { Canvas } from "./Canvas";
+import { useI18n } from "@/lib/i18n";
 
-/** Resolves a share token to its workbook and renders the viewer. */
+/** Resolves a share token to its project and renders the viewer. */
 export function ShareView({ token }: { token: string }) {
+  const { t } = useI18n();
   const [state, setState] = useState<
     | { kind: "load" }
     | { kind: "err"; message: string }
@@ -21,7 +23,7 @@ export function ShareView({ token }: { token: string }) {
       try {
         const res = await fetch(`/api/shares/${token}`);
         const j = await readJson<{ graphId?: string; permission?: string; error?: string }>(res);
-        if (!res.ok || !j.graphId) throw new Error(j.error || "Share not found");
+        if (!res.ok || !j.graphId) throw new Error(j.error || t("site.share.notFound"));
         if (alive)
           setState({
             kind: "ok",
@@ -32,36 +34,36 @@ export function ShareView({ token }: { token: string }) {
         if (alive)
           setState({
             kind: "err",
-            message: e instanceof Error ? e.message : "Share not found",
+            message: e instanceof Error ? e.message : t("site.share.notFound"),
           });
       }
     })();
     return () => {
       alive = false;
     };
-  }, [token]);
+  }, [token, t]);
 
   if (state.kind === "load") {
     return (
       <StatusScreen
-        kicker="Shared workbook"
-        title="Opening workbook…"
-        body="Loading a read-only copy."
+        kicker={t("site.share.kicker")}
+        title={t("site.share.loadingTitle")}
+        body={t("site.share.loadingBody")}
       />
     );
   }
   if (state.kind === "err") {
     return (
       <StatusScreen
-        kicker="Shared workbook"
-        title="This link isn’t available"
+        kicker={t("site.share.kicker")}
+        title={t("site.share.errTitle")}
         body={state.message}
         action={
           <Link
             href="/"
             className="kun-btn-primary inline-flex h-11 items-center rounded-full px-6 text-[14px] font-medium"
           >
-            Go to Kun
+            {t("site.share.goHome")}
           </Link>
         }
       />
