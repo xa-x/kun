@@ -15,12 +15,14 @@ import {
   Trash,
   UploadSimple,
 } from "@phosphor-icons/react";
-import { ago, until } from "@/lib/format";
 import { toast } from "./Toast";
 import { readJson } from "@/lib/http";
 import { useCreateWorkbook } from "@/lib/use-create-workbook";
-import { PageHeader } from "./shell/PageHeader";
+import { WorkspaceBadge } from "./shell/WorkspaceSwitcher";
+import { HomeRail } from "./home/HomeRail";
 import { BookCover } from "./workbooks/BookCover";
+import { useI18n } from "@/lib/i18n";
+import type { MessageKey } from "@/lib/i18n/messages";
 
 export interface BookMeta {
   id: string;
@@ -30,6 +32,7 @@ export interface BookMeta {
   nodeCount?: number;
   edgeCount?: number;
   kinds?: string[];
+  coverId?: string | null;
   lastRun?: {
     id: string;
     status: string;
@@ -40,11 +43,30 @@ export interface BookMeta {
   nextRunAt?: string | number | null;
 }
 
-export function HomeGallery() {
+export function HomeGallery({ name, workspace }: { name: string; workspace: { id: string; name: string } }) {
   const router = useRouter();
+  const { t, tn } = useI18n();
   const { create, creating } = useCreateWorkbook();
   const [books, setBooks] = useState<BookMeta[] | null>(null);
   const [query, setQuery] = useState("");
+  const [hello, setHello] = useState<MessageKey>("shell.home.hello.welcome");
+  useEffect(() => {
+    const h = new Date().getHours();
+    const timer = setTimeout(
+      () =>
+        setHello(
+          h < 5
+            ? "shell.home.hello.late"
+            : h < 12
+              ? "shell.home.hello.morning"
+              : h < 18
+                ? "shell.home.hello.afternoon"
+                : "shell.home.hello.evening",
+        ),
+      0,
+    );
+    return () => clearTimeout(timer);
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -52,10 +74,10 @@ export function HomeGallery() {
       const j = await readJson<{ graphs?: BookMeta[] }>(res);
       setBooks(Array.isArray(j?.graphs) ? j.graphs : []);
     } catch {
-      toast("Couldn’t load workbooks.", "error");
+      toast(t("shell.home.loadFailed"), "error");
       setBooks([]);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     const t = setTimeout(() => load(), 0);
@@ -69,10 +91,10 @@ export function HomeGallery() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ id, title }),
       });
-      if (!res.ok) throw new Error("Rename failed");
+      if (!res.ok) throw new Error("rename");
       setBooks((xs) => (xs ?? []).map((b) => (b.id === id ? { ...b, title } : b)));
     } catch {
-      toast("Couldn’t rename workbook.", "error");
+      toast(t("shell.home.renameFailed"), "error");
     }
   };
 
@@ -80,10 +102,10 @@ export function HomeGallery() {
     try {
       const res = await fetch(`/api/graphs/${id}/duplicate`, { method: "POST" });
       const j = await readJson<{ graph?: { id: string }; error?: string }>(res);
-      if (!res.ok || !j.graph?.id) throw new Error(j.error || "Duplicate failed");
+      if (!res.ok || !j.graph?.id) throw new Error(j.error || t("shell.home.duplicateFailed"));
       router.push(`/w/${j.graph.id}`);
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Couldn’t duplicate.", "error");
+      toast(e instanceof Error ? e.message : t("shell.home.duplicateFailed"), "error");
     }
   };
 
@@ -96,10 +118,10 @@ export function HomeGallery() {
         body: JSON.stringify(pack),
       });
       const j = await readJson<{ graph?: { id: string }; error?: string }>(res);
-      if (!res.ok || !j.graph?.id) throw new Error(j.error || "Import failed");
+      if (!res.ok || !j.graph?.id) throw new Error(j.error || t("shell.home.importFailed"));
       router.push(`/w/${j.graph.id}`);
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Couldn’t import workbook.", "error");
+      toast(e instanceof Error ? e.message : t("shell.home.importFailed"), "error");
     }
   };
 
@@ -108,50 +130,56 @@ export function HomeGallery() {
       const res = await fetch(`/api/graphs?id=${encodeURIComponent(id)}`, {
         method: "DELETE",
       });
-      if (!res.ok) throw new Error("Delete failed");
+      if (!res.ok) throw new Error("delete");
       setBooks((xs) => (xs ?? []).filter((b) => b.id !== id));
-      toast("Workbook deleted.", "ok");
+      toast(t("shell.home.deleted"), "ok");
     } catch {
-      toast("Couldn’t delete workbook.", "error");
+      toast(t("shell.home.deleteFailed"), "error");
     }
   };
 
   const shown = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!books || !q) return books;
-    return books.filter((b) => (b.title || "Untitled").toLowerCase().includes(q));
-  }, [books, query]);
+    return books.filter((b) => (b.title || t("common.untitled")).toLowerCase().includes(q));
+  }, [books, query, t]);
+
+  const recent = books && books.length > 3 ? books.slice(0, 3) : [];
+  const rest =
+    recent.length > 0 && !query.trim() ? (shown ?? []).filter((b) => !recent.includes(b)) : shown;
+  const first = name.trim().split(/\s+/)[0] || t("shell.home.there");
 
   return (
-    <div className="mx-auto w-full max-w-6xl px-5 py-10 md:px-10 md:py-12">
-      <PageHeader
-        title="Workbooks"
-        description="Pipelines of text, image, audio and video models. Build by hand, or describe the flow and let the assistant wire it."
-        actions={
-          <>
-            <label className="kun-btn-secondary inline-flex h-10 cursor-pointer items-center gap-2 rounded-full px-4 text-[13px] font-medium">
-              <UploadSimple size={15} weight="bold" aria-hidden />
-              Import
-              <input
-                type="file"
-                accept="application/json"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) void importFile(f);
-                  e.target.value = "";
-                }}
-              />
-            </label>
-            <button
-              type="button"
-              onClick={() => void create("ai")}
-              disabled={!!creating}
-              className="kun-btn-secondary inline-flex h-10 items-center gap-2 rounded-full px-4 text-[13px] font-medium disabled:opacity-60"
-            >
-              <Sparkle size={15} weight="bold" aria-hidden />
-              {creating === "ai" ? "Creating…" : "Create with AI"}
-            </button>
+    <div className="mx-auto w-full max-w-7xl px-5 py-10 md:px-10 md:py-12">
+      <header className="mb-9 flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
+        <div className="flex min-w-0 items-center gap-4">
+          <WorkspaceBadge id={workspace.id} name={workspace.name} size={48} />
+          <div className="min-w-0">
+            <h1 className="truncate text-[28px] font-semibold leading-tight tracking-tight text-ink">
+              {t("shell.home.greeting", { hello: t(hello), name: first })}
+            </h1>
+            <p className="mt-0.5 truncate text-[14px] text-muted">
+              <bdi>{workspace.name}</bdi>
+              {books ? ` · ${tn("shell.home.projects", books.length)}` : ""}
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="kun-btn-secondary inline-flex h-10 cursor-pointer items-center gap-2 rounded-full px-4 text-[13px] font-medium">
+            <UploadSimple size={15} weight="bold" aria-hidden />
+            {t("shell.home.import")}
+            <input
+              type="file"
+              accept="application/json"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void importFile(f);
+                e.target.value = "";
+              }}
+            />
+          </label>
+          {books?.length !== 0 && (
             <button
               type="button"
               onClick={() => void create("blank")}
@@ -159,69 +187,149 @@ export function HomeGallery() {
               className="kun-btn-primary inline-flex h-10 items-center gap-2 rounded-full px-5 text-[13px] font-medium disabled:opacity-60"
             >
               <Plus size={15} weight="bold" aria-hidden />
-              {creating === "blank" ? "Creating…" : "New workbook"}
+              {creating === "blank" ? t("common.creating") : t("shell.nav.newProject")}
             </button>
-          </>
-        }
-      />
-
-      {books && books.length > 6 && (
-        <div className="relative mb-6 max-w-sm">
-          <MagnifyingGlass
-            size={16}
-            className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-faint"
-            aria-hidden
-          />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search workbooks"
-            aria-label="Search workbooks"
-            className="kun-input !rounded-full pl-10"
-          />
+          )}
         </div>
-      )}
+      </header>
 
-      {shown === null && (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="kun-skeleton h-[230px]" />
-          ))}
+      <div className="grid gap-12 xl:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="min-w-0">
+          {books && books.length > 0 && (
+            <Composer creating={creating} onAi={(p) => void create("ai", p)} />
+          )}
+
+          {shown === null && (
+            <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="kun-skeleton h-[230px]" />
+              ))}
+            </div>
+          )}
+
+          {books && books.length === 0 && (
+            <EmptyLibrary
+              creating={creating}
+              onBlank={() => void create("blank")}
+              onAi={(p) => void create("ai", p)}
+            />
+          )}
+
+          {recent.length > 0 && !query.trim() && (
+            <section aria-label={t("shell.home.jumpBack")} className="mb-10">
+              <h2 className="mb-3 text-[12px] font-medium uppercase tracking-[0.12em] text-faint">{t("shell.home.jumpBack")}</h2>
+              <ul className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+                {recent.map((b) => (
+                  <li key={b.id}>
+                    <BookCard book={b} tall onRename={rename} onDelete={remove} onDuplicate={duplicate} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          {books && books.length > 0 && (
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-[12px] font-medium uppercase tracking-[0.12em] text-faint">
+                {recent.length > 0 && !query.trim() ? t("shell.home.earlier") : t("shell.home.allProjects")}
+              </h2>
+              {books.length > 6 && (
+                <div className="relative w-full max-w-[240px]">
+                  <MagnifyingGlass
+                    size={15}
+                    className="pointer-events-none absolute start-3.5 top-1/2 -translate-y-1/2 text-faint"
+                    aria-hidden
+                  />
+                  <input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder={t("shell.home.search")}
+                    aria-label={t("shell.home.search")}
+                    dir="auto"
+                    className="kun-input !h-9 !rounded-full ps-10 !text-[13px]"
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
+          {books && books.length > 0 && shown && shown.length === 0 && (
+            <p className="py-16 text-center text-[14px] text-muted">{t("shell.home.noMatch", { query })}</p>
+          )}
+
+          {rest && rest.length > 0 && (
+            <ul className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
+              {rest.map((b) => (
+                <li key={b.id}>
+                  <BookCard book={b} onRename={rename} onDelete={remove} onDuplicate={duplicate} />
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
-      )}
 
-      {books && books.length === 0 && (
-        <EmptyLibrary
-          creating={creating}
-          onBlank={() => void create("blank")}
-          onAi={() => void create("ai")}
-        />
-      )}
-
-      {books && books.length > 0 && shown && shown.length === 0 && (
-        <p className="py-16 text-center text-[14px] text-muted">
-          No workbook matches “{query}”.
-        </p>
-      )}
-
-      {shown && shown.length > 0 && (
-        <ul className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {shown.map((b) => (
-            <li key={b.id}>
-              <BookCard
-                book={b}
-                onRename={rename}
-                onDelete={remove}
-                onDuplicate={duplicate}
-              />
-            </li>
-          ))}
-        </ul>
-      )}
+        <aside aria-label={t("shell.home.around")} className="xl:sticky xl:top-8 xl:self-start">
+          <HomeRail />
+        </aside>
+      </div>
     </div>
   );
 }
 
+/** A one-line way to start something new, once the page has projects. */
+function Composer({
+  creating,
+  onAi,
+}: {
+  creating: "blank" | "ai" | null;
+  onAi: (prompt: string) => void;
+}) {
+  const { t } = useI18n();
+  const [prompt, setPrompt] = useState("");
+  const ready = prompt.trim().length > 0 && !creating;
+  return (
+    <form
+      className="mb-10 flex items-center gap-2 rounded-2xl border border-line2 bg-card/60 p-2 ps-5 transition-colors focus-within:border-ink/40"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (ready) onAi(prompt);
+      }}
+    >
+      <Sparkle size={16} weight="fill" className="shrink-0 text-faint" aria-hidden />
+      <label htmlFor="compose" className="sr-only">
+        {t("shell.home.whatMake")}
+      </label>
+      <input
+        id="compose"
+        value={prompt}
+        onChange={(e) => setPrompt(e.target.value)}
+        maxLength={600}
+        placeholder={t("shell.home.composerPlaceholder")}
+        dir="auto"
+        className="min-w-0 flex-1 bg-transparent py-2 text-[15px] text-ink outline-none placeholder:text-faint"
+      />
+      <button
+        type="submit"
+        disabled={!ready}
+        className="kun-btn-primary inline-flex h-10 shrink-0 items-center gap-2 rounded-full px-5 text-[13px] font-medium disabled:opacity-50"
+      >
+        {creating === "ai" ? t("common.creating") : t("shell.home.build")}
+      </button>
+    </form>
+  );
+}
+
+const IDEAS: MessageKey[] = [
+  "shell.home.idea1",
+  "shell.home.idea2",
+  "shell.home.idea3",
+];
+
+/**
+ * First run. One question, "what do you want to make?", answered in the
+ * page: the prompt goes to the assistant on the new project. The other ways
+ * in sit beside it as plain rows, not three equal cards.
+ */
 function EmptyLibrary({
   creating,
   onBlank,
@@ -229,107 +337,178 @@ function EmptyLibrary({
 }: {
   creating: "blank" | "ai" | null;
   onBlank: () => void;
-  onAi: () => void;
+  onAi: (prompt: string) => void;
 }) {
-  const options = [
-    {
-      title: "Describe it",
-      body: "Tell the assistant what you want built and it wires the nodes for you.",
-      action: creating === "ai" ? "Creating…" : "Create with AI",
-      onClick: onAi,
-      Icon: Sparkle,
-    },
-    {
-      title: "Start from a canvas",
-      body: "A text to AI text to output starter you can reshape in a minute.",
-      action: creating === "blank" ? "Creating…" : "New workbook",
-      onClick: onBlank,
-      Icon: Plus,
-    },
-  ];
+  const { t } = useI18n();
+  const [prompt, setPrompt] = useState("");
+  const ready = prompt.trim().length > 0 && !creating;
+  const submit = () => ready && onAi(prompt);
+
   return (
-    <div className="rounded-2xl border border-dashed border-line2 bg-card/30 p-6 md:p-10">
-      <h2 className="text-[20px] font-semibold tracking-tight text-ink">
-        Make your first workbook
-      </h2>
-      <p className="mt-1.5 max-w-lg text-[14px] leading-relaxed text-muted">
-        Nothing here yet. Pick a way in. You can always change the pipeline later.
-      </p>
-      <div className="mt-7 grid gap-3 md:grid-cols-3">
-        {options.map(({ title, body, action, onClick, Icon }) => (
-          <button
-            key={title}
-            type="button"
-            onClick={onClick}
-            disabled={!!creating}
-            className="group rounded-2xl border border-line bg-card/70 p-5 text-left transition-colors hover:border-line2 disabled:opacity-60"
-          >
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-ink/8 text-ink">
-              <Icon size={17} weight="bold" aria-hidden />
-            </span>
-            <p className="mt-4 text-[15px] font-medium text-ink">{title}</p>
-            <p className="mt-1 text-[13px] leading-relaxed text-muted">{body}</p>
-            <span className="mt-4 inline-flex items-center gap-1.5 text-[13px] font-medium text-ink">
-              {action}
-              <ArrowRight
-                size={13}
-                weight="bold"
-                className="transition-transform group-hover:translate-x-0.5"
-                aria-hidden
-              />
-            </span>
-          </button>
-        ))}
-        <Link
-          href="/templates"
-          className="group rounded-2xl border border-line bg-card/70 p-5 transition-colors hover:border-line2"
+    <div className="grid gap-10 md:grid-cols-[1.7fr_1fr] md:gap-14">
+      <section aria-labelledby="first-project">
+        <h2
+          id="first-project"
+          className="text-[22px] font-semibold leading-tight tracking-tight text-ink"
         >
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-ink/8 text-ink">
-            <Stack size={17} weight="bold" aria-hidden />
-          </span>
-          <p className="mt-4 text-[15px] font-medium text-ink">Borrow a template</p>
-          <p className="mt-1 text-[13px] leading-relaxed text-muted">
-            Clone a published workbook and make it yours.
-          </p>
-          <span className="mt-4 inline-flex items-center gap-1.5 text-[13px] font-medium text-ink">
-            Browse templates
-            <ArrowRight
-              size={13}
-              weight="bold"
-              className="transition-transform group-hover:translate-x-0.5"
-              aria-hidden
-            />
-          </span>
-        </Link>
-      </div>
+          {t("shell.home.whatMake")}
+        </h2>
+        <p className="mt-1.5 max-w-md text-[14px] leading-relaxed text-muted">
+          {t("shell.home.describeHelp")}
+        </p>
+
+        <div className="mt-6 rounded-2xl border border-line2 bg-card/60 p-3 transition-colors focus-within:border-ink/40">
+          <label htmlFor="first-prompt" className="sr-only">
+            {t("shell.home.describeLabel")}
+          </label>
+          <textarea
+            id="first-prompt"
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            rows={4}
+            maxLength={600}
+            placeholder={t("shell.home.firstPlaceholder")}
+            dir="auto"
+            className="w-full resize-none bg-transparent px-2 py-1.5 text-[15px] leading-relaxed text-ink outline-none placeholder:text-faint"
+          />
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3">
+            <div className="flex flex-wrap gap-1.5">
+              {IDEAS.map((idea) => (
+                <button
+                  key={idea}
+                  type="button"
+                  onClick={() => setPrompt(t(idea))}
+                  className="rounded-full border border-line px-3 py-1 text-[12px] text-muted transition-colors hover:border-line2 hover:text-ink active:scale-[0.98]"
+                >
+                  {t(idea)}
+                </button>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!ready}
+              className="kun-btn-primary inline-flex h-10 items-center gap-2 rounded-full px-5 text-[13px] font-medium disabled:opacity-50"
+            >
+              <Sparkle size={15} weight="bold" aria-hidden />
+              {creating === "ai" ? t("common.creating") : t("shell.home.build")}
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section aria-label={t("shell.home.otherWays")}>
+        <p className="text-[12px] font-medium uppercase tracking-[0.12em] text-faint">
+          {t("shell.home.startFrom")}
+        </p>
+        <ul className="mt-3 divide-y divide-line border-y border-line">
+          <StartRow
+            onClick={onBlank}
+            disabled={!!creating}
+            Icon={Plus}
+            title={creating === "blank" ? t("common.creating") : t("shell.home.blank")}
+            body={t("shell.home.blankBody")}
+          />
+          <StartRow
+            href="/community"
+            Icon={Stack}
+            title={t("shell.home.template")}
+            body={t("shell.home.templateBody")}
+          />
+        </ul>
+      </section>
     </div>
   );
 }
 
-function runLabel(book: BookMeta) {
+function StartRow({
+  title,
+  body,
+  Icon,
+  onClick,
+  href,
+  disabled,
+}: {
+  title: string;
+  body: string;
+  Icon: typeof Plus;
+  onClick?: () => void;
+  href?: string;
+  disabled?: boolean;
+}) {
+  const inner = (
+    <>
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-ink/8 text-ink">
+        <Icon size={16} weight="bold" aria-hidden />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[14px] font-medium text-ink">{title}</span>
+        <span className="mt-0.5 block text-[12.5px] leading-snug text-muted">
+          {body}
+        </span>
+      </span>
+      <ArrowRight
+        size={14}
+        weight="bold"
+        className="rtl-flip shrink-0 text-faint transition-transform group-hover:translate-x-0.5 group-hover:text-ink rtl:group-hover:-translate-x-0.5"
+        aria-hidden
+      />
+    </>
+  );
+  const cls =
+    "group flex w-full items-center gap-3 py-3.5 text-start transition-colors hover:bg-ink/[0.03] active:scale-[0.995] disabled:opacity-60";
+  return (
+    <li>
+      {href ? (
+        <Link href={href} className={cls}>
+          {inner}
+        </Link>
+      ) : (
+        <button type="button" onClick={onClick} disabled={disabled} className={cls}>
+          {inner}
+        </button>
+      )}
+    </li>
+  );
+}
+
+function runLabel(
+  book: BookMeta,
+  t: (key: MessageKey, vars?: Record<string, string | number>) => string,
+  ago: (t?: string | number) => string,
+) {
   const run = book.lastRun;
-  if (!run) return { text: "Never run", tone: "bg-faint" };
+  if (!run) return { text: t("shell.home.neverRun"), tone: "bg-faint" };
   const when = ago(run.startedAt);
   if (run.status === "done" || run.status === "succeeded")
-    return { text: `Ran ${when}`, tone: "bg-ok" };
+    return { text: t("shell.home.ran", { when }), tone: "bg-ok" };
   if (run.status === "error" || run.status === "failed")
-    return { text: `Failed ${when}`, tone: "bg-err" };
+    return { text: t("shell.home.failedAt", { when }), tone: "bg-err" };
   if (run.status === "running" || run.status === "queued")
-    return { text: "Running now", tone: "bg-live" };
+    return { text: t("shell.home.runningNow"), tone: "bg-live" };
   return { text: `${run.status} ${when}`, tone: "bg-faint" };
 }
 
 function BookCard({
   book,
+  tall = false,
   onRename,
   onDelete,
   onDuplicate,
 }: {
   book: BookMeta;
+  tall?: boolean;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
   onDuplicate: (id: string) => void;
 }) {
+  const { t, tn, ago, until } = useI18n();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(book.title);
   const [menu, setMenu] = useState(false);
@@ -360,18 +539,25 @@ function BookCard({
 
   const commit = () => {
     setEditing(false);
-    const next = draft.trim().slice(0, 120) || "Untitled";
+    const next = draft.trim().slice(0, 120) || t("common.untitled");
     setDraft(next);
     if (next !== book.title) onRename(book.id, next);
   };
 
-  const run = runLabel(book);
+  const run = runLabel(book, t, ago);
   const href = `/w/${book.id}`;
 
   return (
     <article className="group relative flex flex-col overflow-hidden rounded-2xl border border-line bg-card/80 transition-colors hover:border-line2">
-      <div className="relative h-[132px] border-b border-line bg-sunken/70 p-3">
-        <BookCover kinds={book.kinds ?? []} />
+      <div
+        className={`relative border-b border-line bg-sunken/70 ${tall ? "h-[168px]" : "h-[132px]"} ${book.coverId ? "" : "p-3"}`}
+      >
+        {book.coverId ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={`/api/media/${book.coverId}`} alt="" loading="lazy" className="h-full w-full object-cover" />
+        ) : (
+          <BookCover kinds={book.kinds ?? []} />
+        )}
       </div>
 
       <div className="flex flex-1 flex-col p-4">
@@ -389,7 +575,8 @@ function BookCard({
                   setEditing(false);
                 }
               }}
-              aria-label="Workbook title"
+              aria-label={t("shell.home.projectTitle")}
+              dir="auto"
               className="kun-input !py-1.5 text-[15px] font-medium"
             />
           ) : (
@@ -397,20 +584,21 @@ function BookCard({
               {/* Stretched link: the whole card opens the canvas. */}
               <Link
                 href={href}
+                dir="auto"
                 className="after:absolute after:inset-0 after:content-['']"
               >
-                {book.title || "Untitled"}
+                {book.title || t("common.untitled")}
               </Link>
             </h2>
           )}
 
-          <div ref={menuRef} className="relative z-10 -mr-1.5 -mt-1 shrink-0">
+          <div ref={menuRef} className="relative z-10 -me-1.5 -mt-1 shrink-0">
             <button
               type="button"
               onClick={() => setMenu((v) => !v)}
               aria-haspopup="menu"
               aria-expanded={menu}
-              aria-label={`Actions for ${book.title || "Untitled"}`}
+              aria-label={t("shell.home.actionsFor", { title: book.title || t("common.untitled") })}
               className="flex h-8 w-8 items-center justify-center rounded-full text-faint transition-colors hover:bg-ink/8 hover:text-ink focus-visible:text-ink"
             >
               <DotsThree size={20} weight="bold" aria-hidden />
@@ -418,7 +606,7 @@ function BookCard({
             {menu && (
               <div
                 role="menu"
-                className="kun-pop absolute right-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-xl border border-line2 bg-raised p-1 shadow-2xl shadow-black/40"
+                className="kun-pop absolute end-0 top-full z-20 mt-1 w-44 overflow-hidden rounded-xl border border-line2 bg-raised p-1 shadow-2xl shadow-black/40"
               >
                 <MenuItem
                   icon={<PencilSimple size={15} aria-hidden />}
@@ -428,7 +616,7 @@ function BookCard({
                     setEditing(true);
                   }}
                 >
-                  Rename
+                  {t("common.rename")}
                 </MenuItem>
                 <MenuItem
                   icon={<Copy size={15} aria-hidden />}
@@ -437,7 +625,7 @@ function BookCard({
                     onDuplicate(book.id);
                   }}
                 >
-                  Duplicate
+                  {t("common.duplicate")}
                 </MenuItem>
                 <MenuItem
                   danger
@@ -452,7 +640,7 @@ function BookCard({
                     onDelete(book.id);
                   }}
                 >
-                  {confirm ? "Confirm delete" : "Delete"}
+                  {confirm ? t("shell.home.confirmDelete") : t("common.delete")}
                 </MenuItem>
               </div>
             )}
@@ -467,13 +655,13 @@ function BookCard({
               <span className="text-faint" aria-hidden>
                 /
               </span>
-              {book.nodeCount} {book.nodeCount === 1 ? "node" : "nodes"}
+              {tn("shell.home.nodes", book.nodeCount)}
             </>
           )}
         </p>
         {book.nextRunAt ? (
           <p className="mt-1 text-[12px] text-faint">
-            Next scheduled run {until(book.nextRunAt)}
+            {t("shell.home.nextRun", { when: until(book.nextRunAt) })}
           </p>
         ) : null}
       </div>
@@ -497,7 +685,7 @@ function MenuItem({
       type="button"
       role="menuitem"
       onClick={onClick}
-      className={`flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] transition-colors ${
+      className={`flex h-9 w-full items-center gap-2.5 rounded-lg px-2.5 text-start text-[13px] transition-colors ${
         danger
           ? "text-muted hover:bg-err/10 hover:text-err"
           : "text-muted hover:bg-ink/5 hover:text-ink"

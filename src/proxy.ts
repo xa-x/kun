@@ -36,7 +36,10 @@ export function proxy(req: NextRequest) {
 
 export const config = {
   matcher: [
-    "/workbooks/:path*",
+    "/workspace/:path*",
+    "/assets/:path*",
+    "/settings/:path*",
+    "/shared/:path*",
     "/w/:path*",
     "/runs/:path*",
     "/billing/:path*",

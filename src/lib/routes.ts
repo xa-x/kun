@@ -3,7 +3,8 @@
  * Kept free of server-only imports so the proxy and the browser can use it.
  */
 export const HOME = "/";
-export const APP_HOME = "/workbooks";
+/** The signed-in home. Everything under it needs a session. */
+export const APP_HOME = "/workspace";
 export const SIGN_IN = "/sign-in";
 export const SIGN_UP = "/sign-up";
 

@@ -13,14 +13,17 @@ import {
 } from "@/db/schema";
 import { hashToken } from "./crypto";
 import { newId } from "./ids";
-import { isInvited, isPlatformAdmin } from "./admin";
-import { SIGNUP_OPEN } from "./signup-mode";
+import { isPlatformAdmin } from "./admin";
+import { canSignUp } from "./platform";
 import { orgForUser, type TenantError } from "./tenant";
 import type { MembershipRow, OrgRow, UserRow } from "@/db/schema";
 import { createSupabaseServerClient, supabaseConfigured } from "./supabase";
+import { cookies } from "next/headers";
 
 /** Legacy cookie from the pre-Supabase auth — cleared on logout. */
 export const SESSION_COOKIE = "kun_session";
+/** The workspace the user last switched to. */
+export const WORKSPACE_COOKIE = "kun_ws";
 
 export interface Actor {
   user: UserRow;
@@ -49,7 +52,7 @@ const LEGACY_LOCAL_EMAIL = "local@kun.dev";
 async function ensureUserRow(u: AuthUser): Promise<UserRow | null> {
   const [existing] = await db.select().from(users).where(eq(users.id, u.id)).limit(1);
   if (existing) return existing;
-  if (!SIGNUP_OPEN && !isInvited(u.email)) return null;
+  if (!(await canSignUp(u.email))) return null;
   const email = (u.email ?? `${u.id}@supabase.local`).trim().toLowerCase();
   const [row] = await db
     .insert(users)
@@ -86,12 +89,18 @@ export async function backfillOrphanRows(orgId: string, ownerId: string) {
 /**
  * Give a freshly-signed-in user a workspace. If the SQLite migration carried
  * over the local-first bootstrap org (its only member is local@kun.dev),
- * the first real account claims it — workbooks, runs, and artifacts included.
+ * the first real account claims it — projects, runs, and artifacts included.
  * Once anyone else is a member it is taken, and later accounts get their own
  * empty workspace.
  */
 async function ensureWorkspace(userId: string) {
-  const existing = await orgForUser(userId);
+  let preferred: string | null = null;
+  try {
+    preferred = (await cookies()).get(WORKSPACE_COOKIE)?.value ?? null;
+  } catch {
+    // Outside a request (scripts, tests) there is no cookie to read.
+  }
+  const existing = await orgForUser(userId, preferred);
   if (existing) return existing;
 
   const legacy = await db
@@ -130,6 +139,7 @@ async function ensureWorkspace(userId: string) {
     name: "Personal",
     slug: `org-${orgId}`,
     plan: "free",
+    createdBy: userId,
   });
   await db
     .insert(memberships)
@@ -185,7 +195,10 @@ function scopeFor(req: NextRequest): KeyScope | null {
     path.startsWith("/api/keys") ||
     path.startsWith("/api/billing") ||
     path.startsWith("/api/admin") ||
-    path.startsWith("/api/auth")
+    path.startsWith("/api/auth") ||
+    path.startsWith("/api/workspaces") ||
+    path.startsWith("/api/account") ||
+    path.startsWith("/api/invites")
   ) {
     return null;
   }

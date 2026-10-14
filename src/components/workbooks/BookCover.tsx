@@ -1,4 +1,6 @@
 import { NODE_TYPES } from "@/lib/nodes";
+import { useI18n } from "@/lib/i18n";
+import { nodeLabel } from "@/lib/i18n/nodes";
 
 const W = 240;
 const H = 112;
@@ -15,11 +17,12 @@ interface Placed {
 }
 
 /**
- * A schematic of a workbook's shape (inputs, then AI steps, then outputs) built
+ * A schematic of a project's shape (inputs, then AI steps, then outputs) built
  * from the node kinds it contains. It is a summary of structure, not a
  * screenshot: the library API returns kinds, not positions.
  */
 export function BookCover({ kinds }: { kinds: string[] }) {
+  const { t } = useI18n();
   const defs = kinds
     .map((k) => NODE_TYPES.find((d) => d.type === k))
     .filter((d): d is NonNullable<typeof d> => !!d);
@@ -32,7 +35,7 @@ export function BookCover({ kinds }: { kinds: string[] }) {
     return (
       <div className="flex h-full items-center justify-center" aria-hidden>
         <div className="flex h-[54px] w-[88px] items-center justify-center rounded-xl border border-dashed border-line2 text-[11px] text-faint">
-          Empty
+          {t("shell.book.empty")}
         </div>
       </div>
     );
@@ -73,7 +76,7 @@ export function BookCover({ kinds }: { kinds: string[] }) {
       viewBox={`0 0 ${W} ${H}`}
       className="h-full w-full"
       role="img"
-      aria-label={`Contains ${defs.map((d) => d.label).join(", ")}`}
+      aria-label={t("shell.book.contains", { list: defs.map((d) => nodeLabel(t, d.type, d.label)).join(t("shell.assets.listSep")) })}
     >
       {wires.map((w, i) => (
         <path

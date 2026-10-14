@@ -1,8 +1,12 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { RunsHistory } from "@/components/RunsHistory";
+import { getT } from "@/lib/i18n/server";
 
-export const metadata: Metadata = { title: "Runs" };
+export async function generateMetadata(): Promise<Metadata> {
+  const { t } = await getT();
+  return { title: t("shell.nav.runs") };
+}
 
 export default function RunsPage() {
   return (

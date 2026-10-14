@@ -1,5 +1,6 @@
 import { getActor } from "@/lib/guard";
-import { isPlatformAdmin } from "@/lib/admin";
+import { shellUser } from "@/lib/shell-user";
+import { platform } from "@/lib/platform";
 import { AppShell } from "@/components/shell/AppShell";
 import { MarketingShell } from "@/components/marketing/MarketingShell";
 
@@ -19,15 +20,10 @@ export default async function SiteLayout({
   const actor = await getActor().catch(() => null);
 
   if (actor) {
+    const a = (await platform()).announcement;
+    const banner = a.on ? { text: a.text, level: a.level } : null;
     return (
-      <AppShell
-        user={{
-          name: actor.user.name,
-          email: actor.user.email,
-          plan: actor.org.plan,
-          isAdmin: isPlatformAdmin(actor.user.email),
-        }}
-      >
+      <AppShell user={shellUser(actor)} banner={banner}>
         {children}
       </AppShell>
     );
